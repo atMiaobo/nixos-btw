@@ -1,0 +1,322 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/dashboard"
+cache_file="$cache_dir/weather.json"
+ttl_seconds=900
+
+mkdir -p "$cache_dir"
+
+mode="${1:-json}"
+
+# Use cache unless forced.
+if [ "${mode}" != "force" ] && [ -f "$cache_file" ]; then
+  now="$(date +%s)"
+  modified="$(stat -c %Y "$cache_file")"
+  age="$((now - modified))"
+
+  if [ "$age" -lt "$ttl_seconds" ]; then
+    if [ "$mode" = "line" ]; then
+      jq -r '.line' "$cache_file"
+    elif [ "$mode" = "detail" ]; then
+      jq -r '.detail_line' "$cache_file"
+    else
+      cat "$cache_file"
+    fi
+    exit 0
+  fi
+fi
+
+# 1. Get approximate location from public IP.
+location_json="$(curl -fsS --max-time 6 "https://ipapi.co/json/")"
+
+city="$(jq -r '.city // empty' <<< "$location_json")"
+country="$(jq -r '.country_name // empty' <<< "$location_json")"
+latitude="$(jq -r '.latitude // empty' <<< "$location_json")"
+longitude="$(jq -r '.longitude // empty' <<< "$location_json")"
+timezone="$(jq -r '.timezone // "auto"' <<< "$location_json")"
+
+if [ -z "$city" ] || [ -z "$country" ] || [ -z "$latitude" ] || [ -z "$longitude" ]; then
+  echo "weather: failed to get location" >&2
+  exit 1
+fi
+
+# 2. Get current weather from Open-Meteo.
+weather_json="$(
+  curl -fsS --max-time 8 \
+    "https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,is_day,precipitation,rain,showers,snowfall,wind_speed_10m,wind_direction_10m,wind_gusts_10m&daily=sunrise,sunset&timezone=auto&forecast_days=1"
+)"
+
+temperature="$(jq -r '.current.temperature_2m | round' <<< "$weather_json")"
+feels_like="$(jq -r '.current.apparent_temperature | round' <<< "$weather_json")"
+humidity="$(jq -r '.current.relative_humidity_2m | round' <<< "$weather_json")"
+weather_code="$(jq -r '.current.weather_code' <<< "$weather_json")"
+is_day="$(jq -r '.current.is_day' <<< "$weather_json")"
+precipitation="$(jq -r '.current.precipitation // 0' <<< "$weather_json")"
+wind_speed="$(jq -r '.current.wind_speed_10m | round' <<< "$weather_json")"
+wind_direction="$(jq -r '.current.wind_direction_10m | round' <<< "$weather_json")"
+wind_gusts="$(jq -r '.current.wind_gusts_10m | round' <<< "$weather_json")"
+current_time="$(jq -r '.current.time // empty' <<< "$weather_json")"
+
+sunrise="$(jq -r '.daily.sunrise[0] // empty' <<< "$weather_json")"
+sunset="$(jq -r '.daily.sunset[0] // empty' <<< "$weather_json")"
+
+sunrise_time="${sunrise#*T}"
+sunset_time="${sunset#*T}"
+
+# Keep only HH:MM.
+sunrise_time="${sunrise_time:0:5}"
+sunset_time="${sunset_time:0:5}"
+
+# Convert ISO local-time string like 2026-06-29T21:42 to minutes after midnight.
+minutes_from_iso() {
+  local iso="$1"
+  local hm="${iso#*T}"
+  local hh="${hm:0:2}"
+  local mm="${hm:3:2}"
+
+  if [ -z "$hh" ] || [ -z "$mm" ]; then
+    echo 0
+    return
+  fi
+
+  echo "$((10#$hh * 60 + 10#$mm))"
+}
+
+abs_diff() {
+  local a="$1"
+  local b="$2"
+  local d="$((a - b))"
+
+  if [ "$d" -lt 0 ]; then
+    echo "$((-d))"
+  else
+    echo "$d"
+  fi
+}
+
+current_min="$(minutes_from_iso "$current_time")"
+sunrise_min="$(minutes_from_iso "$sunrise")"
+sunset_min="$(minutes_from_iso "$sunset")"
+
+near_sunrise=false
+near_sunset=false
+
+if [ "$(abs_diff "$current_min" "$sunrise_min")" -le 45 ]; then
+  near_sunrise=true
+fi
+
+if [ "$(abs_diff "$current_min" "$sunset_min")" -le 60 ]; then
+  near_sunset=true
+fi
+
+# 3. Map WMO weather code to compact Japanese label + Nerd Font icon.
+#
+# Icons used here are mostly weather-ish Nerd Font / Material Design glyphs.
+# If any glyph renders badly, swap it from:
+# https://www.nerdfonts.com/cheat-sheet
+#
+# Common useful glyphs:
+#   󰖙 sunny
+#   󰖔 night
+#   󰖕 partly cloudy
+#   󰖐 cloudy
+#   󰖑 fog
+#   󰖗 rainy
+#   󰖖 pouring
+#   󰖘 snowy
+#   󰖓 lightning
+#   󰖒 hail
+#   󰖚 sunset
+#   󰖛 sunset down
+#   󰖜 sunset up
+#   󰖝 windy
+#   󰖞 windy variant
+
+label="？"
+icon="󰖐"
+
+case "$weather_code" in
+  0)
+    label="晴"
+
+    if [ "$near_sunrise" = true ]; then
+      icon="󰖜"
+      label="朝焼"
+    elif [ "$near_sunset" = true ]; then
+      icon="󰖛"
+      label="夕焼"
+    elif [ "$is_day" = "1" ]; then
+      icon="󰖙"
+    else
+      icon="󰖔"
+    fi
+    ;;
+
+  1)
+    label="晴"
+
+    if [ "$near_sunrise" = true ]; then
+      icon="󰖜"
+      label="朝焼"
+    elif [ "$near_sunset" = true ]; then
+      icon="󰖛"
+      label="夕焼"
+    elif [ "$is_day" = "1" ]; then
+      icon="󰖙"
+    else
+      icon="󰖔"
+    fi
+    ;;
+
+  2)
+    label="薄曇"
+    icon="󰖕"
+    ;;
+
+  3)
+    label="曇"
+    icon="󰖐"
+    ;;
+
+  45|48)
+    label="霧"
+    icon="󰖑"
+    ;;
+
+  51|53|55)
+    label="霧雨"
+    icon="󰖗"
+    ;;
+
+  56|57)
+    label="凍雨"
+    icon="󰖒"
+    ;;
+
+  61|63|80|81)
+    label="雨"
+    icon="󰖗"
+    ;;
+
+  65|82)
+    label="大雨"
+    icon="󰖖"
+    ;;
+
+  66|67)
+    label="凍雨"
+    icon="󰖒"
+    ;;
+
+  71|73|75|77)
+    label="雪"
+    icon="󰖘"
+    ;;
+
+  85|86)
+    label="雪"
+    icon="󰖘"
+    ;;
+
+  95)
+    label="雷雨"
+    icon="󰖓"
+    ;;
+
+  96|99)
+    label="雷雹"
+    icon="󰖒"
+    ;;
+esac
+
+# 4. Wind override, but only for calm-ish weather.
+# If it is already raining/snowing/thundering, keep that as the main icon.
+if [[ "$weather_code" =~ ^(0|1|2|3)$ ]]; then
+  if [ "$wind_gusts" -ge 50 ]; then
+    label="突風"
+    icon="󰖞"
+  elif [ "$wind_speed" -ge 30 ]; then
+    label="風"
+    icon="󰖝"
+  fi
+fi
+
+wind_icon="󰖝"
+humidity_icon="󰖎"
+feels_icon="󰔏"
+sunrise_icon="󰖜"
+sunset_icon="󰖛"
+
+line="${temperature}° ${label} · ${city}, ${country}"
+detail_line="${wind_icon} ${wind_speed}km/h · ${humidity_icon} ${humidity}% · ${sunset_icon} ${sunset_time}"
+
+jq -n \
+  --arg city "$city" \
+  --arg country "$country" \
+  --arg latitude "$latitude" \
+  --arg longitude "$longitude" \
+  --arg timezone "$timezone" \
+  --arg temperature_c "$temperature" \
+  --arg apparent_temperature_c "$feels_like" \
+  --arg humidity "$humidity" \
+  --arg precipitation_mm "$precipitation" \
+  --arg weather_code "$weather_code" \
+  --arg weather "$label" \
+  --arg icon "$icon" \
+  --arg wind_icon "$wind_icon" \
+  --arg wind_speed_kmh "$wind_speed" \
+  --arg wind_direction "$wind_direction" \
+  --arg wind_gusts_kmh "$wind_gusts" \
+  --arg humidity_icon "$humidity_icon" \
+  --arg feels_icon "$feels_icon" \
+  --arg sunrise_icon "$sunrise_icon" \
+  --arg sunset_icon "$sunset_icon" \
+  --arg sunrise "$sunrise" \
+  --arg sunset "$sunset" \
+  --arg sunrise_time "$sunrise_time" \
+  --arg sunset_time "$sunset_time" \
+  --arg line "$line" \
+  --arg detail_line "$detail_line" \
+  '{
+    city: $city,
+    country: $country,
+    latitude: ($latitude | tonumber),
+    longitude: ($longitude | tonumber),
+    timezone: $timezone,
+
+    temperature_c: ($temperature_c | tonumber),
+    apparent_temperature_c: ($apparent_temperature_c | tonumber),
+    humidity: ($humidity | tonumber),
+    precipitation_mm: ($precipitation_mm | tonumber),
+
+    weather_code: ($weather_code | tonumber),
+    weather: $weather,
+    icon: $icon,
+
+    wind_icon: $wind_icon,
+    wind_speed_kmh: ($wind_speed_kmh | tonumber),
+    wind_direction: ($wind_direction | tonumber),
+    wind_gusts_kmh: ($wind_gusts_kmh | tonumber),
+
+    humidity_icon: $humidity_icon,
+    feels_icon: $feels_icon,
+
+    sunrise_icon: $sunrise_icon,
+    sunset_icon: $sunset_icon,
+    sunrise: $sunrise,
+    sunset: $sunset,
+    sunrise_time: $sunrise_time,
+    sunset_time: $sunset_time,
+
+    line: $line,
+    detail_line: $detail_line
+  }' > "$cache_file"
+
+if [ "$mode" = "line" ]; then
+  jq -r '.line' "$cache_file"
+elif [ "$mode" = "detail" ]; then
+  jq -r '.detail_line' "$cache_file"
+else
+  cat "$cache_file"
+fi

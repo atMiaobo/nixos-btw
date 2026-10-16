@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p "$HOME/Pictures/Screenshots"
+
+geometry="$(slurp)" || exit 0
+
+[ -z "$geometry" ] && exit 0
+
+file="$HOME/Pictures/Screenshots/$(date '+%Y-%m-%d_%H-%M-%S_area.png')"
+
+grim -g "$geometry" "$file"
+wl-copy --type image/png < "$file"
+
+notify-send "Screenshot" "Area saved and copied"

@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-json}"
+
+battery_path=""
+
+for bat in /sys/class/power_supply/BAT* /sys/class/power_supply/CMB*; do
+  if [ -d "$bat" ] && [ -f "$bat/capacity" ]; then
+    battery_path="$bat"
+    break
+  fi
+done
+
+if [ -z "$battery_path" ]; then
+  jq -n '{
+    visible: false,
+    icon: "󰂑",
+    percent: null,
+    status: "Missing",
+    line: "no battery",
+    detail_line: "battery not found"
+  }'
+  exit 0
+fi
+
+read_file() {
+  local file="$1"
+  local fallback="${2:-}"
+
+  if [ -f "$file" ]; then
+    cat "$file"
+  else
+    printf '%s' "$fallback"
+  fi
+}
+
+to_watts() {
+  local microwatts="$1"
+
+  if [ -z "$microwatts" ] || [ "$microwatts" = "0" ]; then
+    echo "0"
+    return
+  fi
+
+  awk -v v="$microwatts" 'BEGIN { printf "%.1f", v / 1000000 }'
+}
+
+to_wh() {
+  local microwh="$1"
+
+  if [ -z "$microwh" ] || [ "$microwh" = "0" ]; then
+    echo "0"
+    return
+  fi
+
+  awk -v v="$microwh" 'BEGIN { printf "%.1f", v / 1000000 }'
+}
+
+num_or_null() {
+  local value="$1"
+
+  if [ -z "$value" ]; then
+    echo "null"
+  else
+    echo "$value"
+  fi
+}
+
+capacity="$(read_file "$battery_path/capacity" "")"
+status="$(read_file "$battery_path/status" "Unknown")"
+
+manufacturer="$(read_file "$battery_path/manufacturer" "")"
+model_name="$(read_file "$battery_path/model_name" "")"
+technology="$(read_file "$battery_path/technology" "")"
+cycle_count="$(read_file "$battery_path/cycle_count" "")"
+charge_limit="$(read_file "$battery_path/charge_control_end_threshold" "")"
+
+energy_now_raw="$(read_file "$battery_path/energy_now" "")"
+energy_full_raw="$(read_file "$battery_path/energy_full" "")"
+energy_full_design_raw="$(read_file "$battery_path/energy_full_design" "")"
+
+charge_now_raw="$(read_file "$battery_path/charge_now" "")"
+charge_full_raw="$(read_file "$battery_path/charge_full" "")"
+charge_full_design_raw="$(read_file "$battery_path/charge_full_design" "")"
+
+voltage_now_raw="$(read_file "$battery_path/voltage_now" "")"
+power_now_raw="$(read_file "$battery_path/power_now" "")"
+current_now_raw="$(read_file "$battery_path/current_now" "")"
+
+# Some batteries expose power_now directly in microwatts.
+# Others expose current_now in microamps + voltage_now in microvolts.
+if [ -z "$power_now_raw" ] && [ -n "$current_now_raw" ] && [ -n "$voltage_now_raw" ]; then
+  power_now_raw="$(
+    awk -v c="$current_now_raw" -v v="$voltage_now_raw" \
+      'BEGIN { printf "%.0f", (c * v) / 1000000 }'
+  )"
+fi
+
+power_w="$(to_watts "${power_now_raw:-0}")"
+
+energy_now_wh=""
+energy_full_wh=""
+energy_full_design_wh=""
+health_percent=""
+
+if [ -n "$energy_now_raw" ] && [ -n "$energy_full_raw" ]; then
+  energy_now_wh="$(to_wh "$energy_now_raw")"
+  energy_full_wh="$(to_wh "$energy_full_raw")"
+
+  if [ -n "$energy_full_design_raw" ] && [ "$energy_full_design_raw" != "0" ]; then
+    energy_full_design_wh="$(to_wh "$energy_full_design_raw")"
+    health_percent="$(
+      awk -v full="$energy_full_raw" -v design="$energy_full_design_raw" \
+        'BEGIN { printf "%.0f", (full / design) * 100 }'
+    )"
+  fi
+elif [ -n "$charge_now_raw" ] && [ -n "$charge_full_raw" ] && [ -n "$voltage_now_raw" ]; then
+  # Fallback for batteries that expose charge instead of energy.
+  energy_now_wh="$(
+    awk -v c="$charge_now_raw" -v v="$voltage_now_raw" \
+      'BEGIN { printf "%.1f", (c * v) / 1000000000000 }'
+  )"
+
+  energy_full_wh="$(
+    awk -v c="$charge_full_raw" -v v="$voltage_now_raw" \
+      'BEGIN { printf "%.1f", (c * v) / 1000000000000 }'
+  )"
+
+  if [ -n "$charge_full_design_raw" ] && [ "$charge_full_design_raw" != "0" ]; then
+    energy_full_design_wh="$(
+      awk -v c="$charge_full_design_raw" -v v="$voltage_now_raw" \
+        'BEGIN { printf "%.1f", (c * v) / 1000000000000 }'
+    )"
+
+    health_percent="$(
+      awk -v full="$charge_full_raw" -v design="$charge_full_design_raw" \
+        'BEGIN { printf "%.0f", (full / design) * 100 }'
+    )"
+  fi
+fi
+
+icon="󰶹"
+power_label="draw"
+power_direction="discharging"
+power_draw_w="null"
+charge_power_w="null"
+
+case "$status" in
+  Charging)
+    icon="󰶼"
+    power_label="charging"
+    power_direction="charging"
+    charge_power_w="$power_w"
+    ;;
+  Full)
+    icon="󰽙"
+    power_label="full"
+    power_direction="full"
+    ;;
+  "Not charging")
+    icon="󰽙"
+    power_label="capped"
+    power_direction="not_charging"
+    ;;
+  Discharging)
+    icon="󰶹"
+    power_label="draw"
+    power_direction="discharging"
+    power_draw_w="$power_w"
+    ;;
+  *)
+    icon="󰂑"
+    power_label="unknown"
+    power_direction="unknown"
+    ;;
+esac
+
+line="${capacity}%"
+
+if [ "$status" = "Charging" ]; then
+  detail_line="${power_w}W charging"
+elif [ "$status" = "Discharging" ]; then
+  detail_line="${power_w}W draw"
+elif [ "$status" = "Not charging" ]; then
+  detail_line="capped"
+elif [ "$status" = "Full" ]; then
+  detail_line="full"
+else
+  detail_line="$status"
+fi
+
+json="$(
+  jq -n \
+    --arg path "$battery_path" \
+    --arg icon "$icon" \
+    --arg status "$status" \
+    --arg power_direction "$power_direction" \
+    --arg power_label "$power_label" \
+    --arg line "$line" \
+    --arg detail_line "$detail_line" \
+    --arg manufacturer "$manufacturer" \
+    --arg model_name "$model_name" \
+    --arg technology "$technology" \
+    --argjson percent "$(num_or_null "$capacity")" \
+    --argjson power_w "$(num_or_null "$power_w")" \
+    --argjson power_draw_w "$(num_or_null "$power_draw_w")" \
+    --argjson charge_power_w "$(num_or_null "$charge_power_w")" \
+    --argjson energy_now_wh "$(num_or_null "$energy_now_wh")" \
+    --argjson energy_full_wh "$(num_or_null "$energy_full_wh")" \
+    --argjson energy_full_design_wh "$(num_or_null "$energy_full_design_wh")" \
+    --argjson health_percent "$(num_or_null "$health_percent")" \
+    --argjson cycle_count "$(num_or_null "$cycle_count")" \
+    --argjson charge_limit "$(num_or_null "$charge_limit")" \
+    '{
+      visible: true,
+
+      icon: $icon,
+      percent: $percent,
+      status: $status,
+      line: $line,
+      detail_line: $detail_line,
+
+      power_direction: $power_direction,
+      power_label: $power_label,
+      power_w: $power_w,
+      power_draw_w: $power_draw_w,
+      charge_power_w: $charge_power_w,
+
+      energy_now_wh: $energy_now_wh,
+      energy_full_wh: $energy_full_wh,
+      energy_full_design_wh: $energy_full_design_wh,
+      health_percent: $health_percent,
+
+      cycle_count: $cycle_count,
+      charge_limit: $charge_limit,
+
+      manufacturer: $manufacturer,
+      model_name: $model_name,
+      technology: $technology,
+
+      path: $path
+    }'
+)"
+
+case "$mode" in
+  json)
+    echo "$json"
+    ;;
+  line)
+    jq -r '.line' <<< "$json"
+    ;;
+  detail)
+    jq -r '.detail_line' <<< "$json"
+    ;;
+  icon)
+    jq -r '.icon' <<< "$json"
+    ;;
+  *)
+    echo "Usage: battery [json|line|detail|icon]" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+input=${1:?input path required}
+output=${2:?output path required}
+size=${3:-1024}
+
+input=${input#file://}
+output=${output#file://}
+
+tmp=$(mktemp --suffix=.ppm)
+cleanup() {
+  rm -f "$tmp"
+}
+trap cleanup EXIT
+
+if dcraw_emu -c -w -h "$input" >"$tmp" 2>/dev/null; then
+  case "$output" in
+    *.png) format="PNG32:" ;;
+    *.jpg|*.jpeg) format="JPEG:" ;;
+    *) format="JPEG:" ;;
+  esac
+
+  magick "$tmp" -auto-orient -thumbnail "${size}x${size}>" "${format}${output}"
+  exit 0
+fi
+
+magick "ARW:${input}" -auto-orient -thumbnail "${size}x${size}>" "$output"

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+PIDFILE="/tmp/dashboard.pid"
+LOGFILE="/tmp/dashboard.log"
+
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+  kill "$(cat "$PIDFILE")" 2>/dev/null || true
+  rm -f "$PIDFILE"
+else
+  pkill -f "qs -c dashboard" 2>/dev/null || true
+
+  qs -c dashboard >"$LOGFILE" 2>&1 &
+  echo $! > "$PIDFILE"
+fi

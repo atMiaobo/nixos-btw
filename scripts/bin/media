@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-json}"
+
+num_or_null() {
+  local value="${1:-}"
+
+  if [ -z "$value" ]; then
+    echo "null"
+  else
+    echo "$value"
+  fi
+}
+
+empty_json() {
+  local reason="${1:-not playing}"
+
+  jq -n \
+    --arg icon "󰎈" \
+    --arg reason "$reason" \
+    '{
+      visible: false,
+      active: false,
+      playing: false,
+      player: "",
+      icon: $icon,
+      title: "",
+      artist: "",
+      album: "",
+      line: "",
+      detail_line: $reason,
+      length_seconds: null,
+      position_seconds: null,
+      progress_percent: null,
+      art_url: ""
+    }'
+}
+
+if ! command -v playerctl >/dev/null 2>&1; then
+  json="$(empty_json "playerctl not found")"
+else
+  player="$(
+    playerctl -l 2>/dev/null \
+      | awk '/^spotify($|[.])/{ print; exit }'
+  )"
+
+  if [ -z "$player" ]; then
+    json="$(empty_json "spotify not running")"
+  else
+    status="$(playerctl -p "$player" status 2>/dev/null || echo "Stopped")"
+
+    if [ "$status" != "Playing" ]; then
+      json="$(empty_json "spotify not playing")"
+    else
+      title="$(playerctl -p "$player" metadata --format '{{ title }}' 2>/dev/null || true)"
+      artist="$(playerctl -p "$player" metadata --format '{{ artist }}' 2>/dev/null || true)"
+      album="$(playerctl -p "$player" metadata --format '{{ album }}' 2>/dev/null || true)"
+      art_url="$(playerctl -p "$player" metadata --format '{{ mpris:artUrl }}' 2>/dev/null || true)"
+      length_us="$(playerctl -p "$player" metadata --format '{{ mpris:length }}' 2>/dev/null || true)"
+      position_seconds="$(playerctl -p "$player" position 2>/dev/null | awk '{ printf "%.0f", $1 }' || true)"
+
+      if [ -n "$length_us" ] && [ "$length_us" != "0" ]; then
+        length_seconds="$(
+          awk -v us="$length_us" 'BEGIN { printf "%.0f", us / 1000000 }'
+        )"
+      else
+        length_seconds=""
+      fi
+
+      if [ -n "$length_seconds" ] && [ "$length_seconds" != "0" ] && [ -n "$position_seconds" ]; then
+        progress_percent="$(
+          awk -v pos="$position_seconds" -v len="$length_seconds" \
+            'BEGIN {
+              p = (pos / len) * 100;
+              if (p < 0) p = 0;
+              if (p > 100) p = 100;
+              printf "%.0f", p;
+            }'
+        )"
+      else
+        progress_percent=""
+      fi
+
+      if [ -n "$artist" ] && [ -n "$title" ]; then
+        line="${artist} — ${title}"
+      elif [ -n "$title" ]; then
+        line="$title"
+      elif [ -n "$artist" ]; then
+        line="$artist"
+      else
+        line="Spotify"
+      fi
+
+      detail_line="$album"
+
+      json="$(
+        jq -n \
+          --arg player "$player" \
+          --arg icon "󰎈" \
+          --arg title "$title" \
+          --arg artist "$artist" \
+          --arg album "$album" \
+          --arg line "$line" \
+          --arg detail_line "$detail_line" \
+          --arg art_url "$art_url" \
+          --argjson length_seconds "$(num_or_null "$length_seconds")" \
+          --argjson position_seconds "$(num_or_null "$position_seconds")" \
+          --argjson progress_percent "$(num_or_null "$progress_percent")" \
+          '{
+            visible: true,
+            active: true,
+            playing: true,
+
+            player: $player,
+            icon: $icon,
+
+            title: $title,
+            artist: $artist,
+            album: $album,
+
+            line: $line,
+            detail_line: $detail_line,
+
+            length_seconds: $length_seconds,
+            position_seconds: $position_seconds,
+            progress_percent: $progress_percent,
+
+            art_url: $art_url
+          }'
+      )"
+    fi
+  fi
+fi
+
+case "$mode" in
+  json)
+    echo "$json"
+    ;;
+  line)
+    jq -r '.line' <<< "$json"
+    ;;
+  detail)
+    jq -r '.detail_line' <<< "$json"
+    ;;
+  icon)
+    jq -r '.icon' <<< "$json"
+    ;;
+  visible)
+    jq -r '.visible' <<< "$json"
+    ;;
+  playing)
+    jq -r '.playing' <<< "$json"
+    ;;
+  progress)
+    jq -r '.progress_percent // empty' <<< "$json"
+    ;;
+  *)
+    echo "Usage: media [json|line|detail|icon|visible|playing|progress]" >&2
+    exit 1
+    ;;
+esac

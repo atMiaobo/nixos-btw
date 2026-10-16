@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p "$HOME/Pictures/Screenshots"
+
+file="$HOME/Pictures/Screenshots/$(date '+%Y-%m-%d_%H-%M-%S_full.png')"
+
+grim "$file"
+wl-copy --type image/png < "$file"
+
+notify-send "Screenshot" "Fullscreen saved and copied"

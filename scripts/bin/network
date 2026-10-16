@@ -1,0 +1,363 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-json}"
+
+num_or_null() {
+  local value="${1:-}"
+
+  if [ -z "$value" ]; then
+    echo "null"
+  else
+    echo "$value"
+  fi
+}
+
+signal_percent_from_dbm() {
+  local dbm="$1"
+
+  if [ -z "$dbm" ]; then
+    echo ""
+    return
+  fi
+
+  awk -v d="$dbm" '
+    BEGIN {
+      if (d <= -100) p = 0;
+      else if (d >= -50) p = 100;
+      else p = 2 * (d + 100);
+
+      printf "%.0f", p;
+    }
+  '
+}
+
+wifi_icon_from_signal() {
+  local dbm="$1"
+
+  if [ -z "$dbm" ]; then
+    echo "󰤭"
+    return
+  fi
+
+  if [ "$dbm" -ge -55 ]; then
+    echo "󰤨"
+  elif [ "$dbm" -ge -65 ]; then
+    echo "󰤥"
+  elif [ "$dbm" -ge -75 ]; then
+    echo "󰤢"
+  else
+    echo "󰤟"
+  fi
+}
+
+detect_vpn() {
+  local icon="󰖂"
+
+  # 1. NetworkManager VPN / WireGuard connections.
+  if command -v nmcli >/dev/null 2>&1; then
+    local nm_vpn
+    nm_vpn="$(
+      nmcli -t -f NAME,TYPE,DEVICE connection show --active 2>/dev/null \
+        | awk -F: '
+          $2 == "vpn" || $2 == "wireguard" || $2 == "tun" {
+            print $0;
+            exit
+          }
+        '
+    )"
+
+    if [ -n "$nm_vpn" ]; then
+      local name type device
+      name="$(awk -F: '{ print $1 }' <<< "$nm_vpn")"
+      type="$(awk -F: '{ print $2 }' <<< "$nm_vpn")"
+      device="$(awk -F: '{ print $3 }' <<< "$nm_vpn")"
+
+      jq -nc \
+        --arg icon "$icon" \
+        --arg type "$type" \
+        --arg connection_name "$name" \
+        --arg interface "$device" \
+        --arg line "VPN: $name" \
+        --arg detail_line "$type · $device" \
+        '{
+          visible: true,
+          active: true,
+          icon: $icon,
+          type: $type,
+          connection_name: $connection_name,
+          interface: $interface,
+          line: $line,
+          detail_line: $detail_line
+        }'
+      return
+    fi
+  fi
+
+  # 2. Raw WireGuard interfaces.
+  if command -v wg >/dev/null 2>&1; then
+    local iface
+    iface="$(wg show interfaces 2>/dev/null | awk '{ print $1; exit }')"
+
+    if [ -n "$iface" ]; then
+      local endpoint latest_handshake transfer
+      endpoint="$(wg show "$iface" endpoints 2>/dev/null | awk '{ print $2; exit }')"
+      latest_handshake="$(wg show "$iface" latest-handshakes 2>/dev/null | awk '{ print $2; exit }')"
+      transfer="$(wg show "$iface" transfer 2>/dev/null | awk '{ print $2 " rx · " $3 " tx"; exit }')"
+
+      jq -nc \
+        --arg icon "$icon" \
+        --arg type "wireguard" \
+        --arg interface "$iface" \
+        --arg endpoint "$endpoint" \
+        --arg latest_handshake "$latest_handshake" \
+        --arg transfer "$transfer" \
+        --arg line "VPN: $iface" \
+        --arg detail_line "wireguard · $iface" \
+        '{
+          visible: true,
+          active: true,
+          icon: $icon,
+          type: $type,
+          interface: $interface,
+          endpoint: $endpoint,
+          latest_handshake: $latest_handshake,
+          transfer: $transfer,
+          line: $line,
+          detail_line: $detail_line
+        }'
+      return
+    fi
+  fi
+
+  # 3. No VPN detected.
+  jq -nc \
+    --arg icon "$icon" \
+    '{
+      visible: false,
+      active: false,
+      icon: $icon,
+      type: "none",
+      line: "",
+      detail_line: ""
+    }'
+}
+
+vpn_json="$(detect_vpn)"
+
+if ! command -v nmcli >/dev/null 2>&1; then
+  json="$(
+    jq -n \
+      --arg icon "󰤭" \
+      --arg type "missing" \
+      --arg line "network unavailable" \
+      --arg detail_line "nmcli not found" \
+      --argjson vpn "$vpn_json" \
+      '{
+        visible: true,
+        connected: false,
+
+        icon: $icon,
+        type: $type,
+
+        line: $line,
+        detail_line: $detail_line,
+
+        vpn: $vpn
+      }'
+  )"
+
+  echo "$json"
+  exit 0
+fi
+
+wifi_dev="$(
+  nmcli -t -f DEVICE,TYPE,STATE device status \
+    | awk -F: '$2 == "wifi" && $3 == "connected" { print $1; exit }'
+)"
+
+eth_dev="$(
+  nmcli -t -f DEVICE,TYPE,STATE device status \
+    | awk -F: '$2 == "ethernet" && $3 == "connected" { print $1; exit }'
+)"
+
+if [ -n "$wifi_dev" ]; then
+  link_info=""
+
+  if command -v iw >/dev/null 2>&1; then
+    link_info="$(iw dev "$wifi_dev" link 2>/dev/null || true)"
+  fi
+
+  ssid="$(
+    sed -n 's/^[[:space:]]*SSID: //p' <<< "$link_info" \
+      | head -n 1
+  )"
+
+  signal_dbm="$(
+    awk '/signal:/ { print int($2); exit }' <<< "$link_info"
+  )"
+
+  tx_bitrate="$(
+    sed -n 's/^[[:space:]]*tx bitrate: //p' <<< "$link_info" \
+      | head -n 1
+  )"
+
+  freq="$(
+    awk '/freq:/ { print $2; exit }' <<< "$link_info"
+  )"
+
+  connection_name="$(
+    nmcli -t -f NAME,DEVICE connection show --active \
+      | awk -F: -v dev="$wifi_dev" '$2 == dev { print $1; exit }'
+  )"
+
+  if [ -z "$ssid" ]; then
+    ssid="$connection_name"
+  fi
+
+  signal_percent="$(signal_percent_from_dbm "$signal_dbm")"
+  icon="$(wifi_icon_from_signal "$signal_dbm")"
+
+  if [ -n "$signal_dbm" ]; then
+    line="${signal_dbm} connected: ${ssid}"
+  elif [ -n "$signal_percent" ]; then
+    line="${signal_percent}% connected: ${ssid}"
+  else
+    line="connected: ${ssid}"
+  fi
+
+  if [ -n "$tx_bitrate" ] && [ -n "$signal_dbm" ]; then
+    detail_line="${signal_dbm} dBm · ${signal_percent}% · ${tx_bitrate}"
+  elif [ -n "$signal_dbm" ]; then
+    detail_line="${signal_dbm} dBm · ${signal_percent}%"
+  else
+    detail_line="$wifi_dev"
+  fi
+
+  json="$(
+    jq -n \
+      --arg icon "$icon" \
+      --arg type "wifi" \
+      --arg device "$wifi_dev" \
+      --arg ssid "$ssid" \
+      --arg connection_name "$connection_name" \
+      --arg line "$line" \
+      --arg detail_line "$detail_line" \
+      --arg tx_bitrate "$tx_bitrate" \
+      --argjson signal_dbm "$(num_or_null "$signal_dbm")" \
+      --argjson signal_percent "$(num_or_null "$signal_percent")" \
+      --argjson freq "$(num_or_null "$freq")" \
+      --argjson vpn "$vpn_json" \
+      '{
+        visible: true,
+        connected: true,
+
+        icon: $icon,
+        type: $type,
+        device: $device,
+        ssid: $ssid,
+        connection_name: $connection_name,
+
+        signal_dbm: $signal_dbm,
+        signal_percent: $signal_percent,
+        frequency_mhz: $freq,
+        tx_bitrate: $tx_bitrate,
+
+        line: $line,
+        detail_line: $detail_line,
+
+        vpn: $vpn
+      }'
+  )"
+
+elif [ -n "$eth_dev" ]; then
+  connection_name="$(
+    nmcli -t -f NAME,DEVICE connection show --active \
+      | awk -F: -v dev="$eth_dev" '$2 == dev { print $1; exit }'
+  )"
+
+  icon="󰈀"
+  line="wired: ${connection_name:-$eth_dev}"
+  detail_line="$eth_dev"
+
+  json="$(
+    jq -n \
+      --arg icon "$icon" \
+      --arg type "ethernet" \
+      --arg device "$eth_dev" \
+      --arg connection_name "$connection_name" \
+      --arg line "$line" \
+      --arg detail_line "$detail_line" \
+      --argjson vpn "$vpn_json" \
+      '{
+        visible: true,
+        connected: true,
+
+        icon: $icon,
+        type: $type,
+        device: $device,
+        connection_name: $connection_name,
+
+        line: $line,
+        detail_line: $detail_line,
+
+        vpn: $vpn
+      }'
+  )"
+
+else
+  json="$(
+    jq -n \
+      --arg icon "󰤭" \
+      --arg type "offline" \
+      --arg line "offline" \
+      --arg detail_line "no active network" \
+      --argjson vpn "$vpn_json" \
+      '{
+        visible: true,
+        connected: false,
+
+        icon: $icon,
+        type: $type,
+
+        line: $line,
+        detail_line: $detail_line,
+
+        vpn: $vpn
+      }'
+  )"
+fi
+
+case "$mode" in
+  json)
+    echo "$json"
+    ;;
+  line)
+    jq -r '.line' <<< "$json"
+    ;;
+  detail)
+    jq -r '.detail_line' <<< "$json"
+    ;;
+  icon)
+    jq -r '.icon' <<< "$json"
+    ;;
+  ssid)
+    jq -r '.ssid // empty' <<< "$json"
+    ;;
+  vpn)
+    jq -r '.vpn' <<< "$json"
+    ;;
+  vpn-line)
+    jq -r '.vpn.line // empty' <<< "$json"
+    ;;
+  vpn-icon)
+    jq -r '.vpn.icon // empty' <<< "$json"
+    ;;
+  vpn-visible)
+    jq -r '.vpn.visible // false' <<< "$json"
+    ;;
+  *)
+    echo "Usage: network [json|line|detail|icon|ssid|vpn|vpn-line|vpn-icon|vpn-visible]" >&2
+    exit 1
+    ;;
+esac

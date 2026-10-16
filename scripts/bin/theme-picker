@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+PIDFILE="/tmp/theme-picker.pid"
+
+if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+  kill "$(cat "$PIDFILE")" 2>/dev/null || true
+  rm -f "$PIDFILE"
+else
+  qs -c theme-picker >/tmp/theme-picker.log 2>&1 &
+  echo $! > "$PIDFILE"
+fi

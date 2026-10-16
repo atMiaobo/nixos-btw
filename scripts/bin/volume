@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+step="2%"
+
+case "${1:-}" in
+  up)
+    wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ "$step+"
+    ;;
+  down)
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ "$step-"
+    ;;
+  mute)
+    wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+    ;;
+  *)
+    echo "Usage: volume up|down|mute" >&2
+    exit 1
+    ;;
+esac
+
+state="$(wpctl get-volume @DEFAULT_AUDIO_SINK@)"
+percent="$(awk '{ printf("%d", $2 * 100 + 0.5) }' <<< "$state")"
+
+if grep -q "MUTED" <<< "$state"; then
+  icon="󰝟"
+  title="$icon Muted"
+  body="0%"
+  value=0
+else
+  icon="󰕾"
+  title="$icon Volume"
+  body="${percent}%"
+  value="$percent"
+fi
+
+dunstify \
+  -a volume \
+  -u low \
+  -h string:x-dunst-stack-tag:volume \
+  -h int:value:"$value" \
+  "$title" "$body"

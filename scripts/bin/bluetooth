@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mode="${1:-json}"
+
+json_bool() {
+  case "${1:-}" in
+    yes|true|1) echo "true" ;;
+    *) echo "false" ;;
+  esac
+}
+
+num_or_null() {
+  local value="${1:-}"
+
+  if [ -z "$value" ]; then
+    echo "null"
+  else
+    echo "$value"
+  fi
+}
+
+device_icon() {
+  local bt_icon="${1:-}"
+
+  case "$bt_icon" in
+    audio-headset|audio-headphones)
+      echo "󰋋"
+      ;;
+    audio-card|audio-speakers)
+      echo "󰓃"
+      ;;
+    input-keyboard)
+      echo "󰌌"
+      ;;
+    input-mouse)
+      echo "󰍽"
+      ;;
+    phone)
+      echo "󰏲"
+      ;;
+    computer)
+      echo "󰌢"
+      ;;
+    *)
+      echo "󰂯"
+      ;;
+  esac
+}
+
+if ! command -v bluetoothctl >/dev/null 2>&1; then
+  jq -n '{
+    visible: false,
+    icon: "󰂲",
+    powered: false,
+    connected: false,
+    connected_count: 0,
+    line: "",
+    detail_line: "bluetoothctl not found",
+    devices: []
+  }'
+  exit 0
+fi
+
+show_output="$(bluetoothctl show 2>/dev/null || true)"
+powered="$(awk -F': ' '/Powered:/ { print $2; exit }' <<< "$show_output")"
+
+if [ "$powered" != "yes" ]; then
+  json="$(
+    jq -n \
+      --arg icon "󰂲" \
+      --argjson powered "$(json_bool "$powered")" \
+      '{
+        visible: false,
+        icon: $icon,
+        powered: $powered,
+        connected: false,
+        connected_count: 0,
+        line: "",
+        detail_line: "bluetooth off",
+        devices: []
+      }'
+  )"
+
+  case "$mode" in
+    json) echo "$json" ;;
+    line) jq -r '.line' <<< "$json" ;;
+    detail) jq -r '.detail_line' <<< "$json" ;;
+    icon) jq -r '.icon' <<< "$json" ;;
+    visible) jq -r '.visible' <<< "$json" ;;
+    devices) jq -r '.devices' <<< "$json" ;;
+    *) echo "Usage: bluetooth [json|line|detail|icon|visible|devices]" >&2; exit 1 ;;
+  esac
+
+  exit 0
+fi
+
+connected_lines="$(bluetoothctl devices Connected 2>/dev/null || true)"
+
+# Fallback for bluetoothctl versions where "devices Connected" is weird/unavailable.
+if [ -z "$connected_lines" ]; then
+  all_devices="$(bluetoothctl devices 2>/dev/null || true)"
+
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+
+    mac="$(awk '{ print $2 }' <<< "$line")"
+
+    if bluetoothctl info "$mac" 2>/dev/null | grep -q "Connected: yes"; then
+      connected_lines="${connected_lines}${line}"$'\n'
+    fi
+  done <<< "$all_devices"
+fi
+
+devices_json="[]"
+connected_count=0
+
+first_name=""
+first_mac=""
+first_icon="󰂯"
+first_battery=""
+
+while IFS= read -r line; do
+  [ -z "$line" ] && continue
+
+  mac="$(awk '{ print $2 }' <<< "$line")"
+  name="${line#Device $mac }"
+
+  info="$(bluetoothctl info "$mac" 2>/dev/null || true)"
+
+  alias="$(
+    awk -F': ' '/Alias:/ { print $2; exit }' <<< "$info"
+  )"
+
+  bt_icon="$(
+    awk -F': ' '/Icon:/ { print $2; exit }' <<< "$info"
+  )"
+
+  battery="$(
+    awk '
+      /Battery Percentage:/ {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^\([0-9]+%\)$/) {
+            gsub(/[()%]/, "", $i);
+            print $i;
+            exit;
+          }
+        }
+      }
+    ' <<< "$info"
+  )"
+
+  display_name="${alias:-$name}"
+  icon="$(device_icon "$bt_icon")"
+
+  device_json="$(
+    jq -n \
+      --arg mac "$mac" \
+      --arg name "$display_name" \
+      --arg raw_name "$name" \
+      --arg bluetooth_icon "$bt_icon" \
+      --arg icon "$icon" \
+      --argjson battery_percent "$(num_or_null "$battery")" \
+      '{
+        mac: $mac,
+        name: $name,
+        raw_name: $raw_name,
+        bluetooth_icon: $bluetooth_icon,
+        icon: $icon,
+        battery_percent: $battery_percent
+      }'
+  )"
+
+  devices_json="$(
+    jq \
+      --argjson device "$device_json" \
+      '. + [$device]' <<< "$devices_json"
+  )"
+
+  connected_count="$((connected_count + 1))"
+
+  if [ -z "$first_name" ]; then
+    first_name="$display_name"
+    first_mac="$mac"
+    first_icon="$icon"
+    first_battery="$battery"
+  fi
+done <<< "$connected_lines"
+
+if [ "$connected_count" -eq 0 ]; then
+  json="$(
+    jq -n \
+      --arg icon "󰂯" \
+      '{
+        visible: false,
+        icon: $icon,
+        powered: true,
+        connected: false,
+        connected_count: 0,
+        line: "",
+        detail_line: "no connected devices",
+        devices: []
+      }'
+  )"
+else
+  if [ "$connected_count" -eq 1 ]; then
+    line="connected: ${first_name}"
+  else
+    line="connected: ${first_name} +$((connected_count - 1))"
+  fi
+
+  if [ -n "$first_battery" ]; then
+    detail_line="${first_name} · ${first_battery}%"
+  else
+    detail_line="${first_name}"
+  fi
+
+  json="$(
+    jq -n \
+      --arg icon "$first_icon" \
+      --arg first_name "$first_name" \
+      --arg first_mac "$first_mac" \
+      --arg line "$line" \
+      --arg detail_line "$detail_line" \
+      --argjson connected_count "$connected_count" \
+      --argjson first_battery "$(num_or_null "$first_battery")" \
+      --argjson devices "$devices_json" \
+      '{
+        visible: true,
+        icon: $icon,
+        powered: true,
+        connected: true,
+        connected_count: $connected_count,
+
+        first_name: $first_name,
+        first_mac: $first_mac,
+        first_battery_percent: $first_battery,
+
+        line: $line,
+        detail_line: $detail_line,
+
+        devices: $devices
+      }'
+  )"
+fi
+
+case "$mode" in
+  json)
+    echo "$json"
+    ;;
+  line)
+    jq -r '.line' <<< "$json"
+    ;;
+  detail)
+    jq -r '.detail_line' <<< "$json"
+    ;;
+  icon)
+    jq -r '.icon' <<< "$json"
+    ;;
+  visible)
+    jq -r '.visible' <<< "$json"
+    ;;
+  devices)
+    jq -r '.devices' <<< "$json"
+    ;;
+  *)
+    echo "Usage: bluetooth [json|line|detail|icon|visible|devices]" >&2
+    exit 1
+    ;;
+esac

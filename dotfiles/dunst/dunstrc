@@ -1,0 +1,98 @@
+[global]
+    monitor = 0
+    follow = mouse
+
+    # Top-right, compact notification card
+    width = (220, 360)
+    height = (0, 90)
+    origin = top-right
+    offset = (18, 18)
+
+    notification_limit = 4
+    layer = overlay
+
+    # Friend-style muted terminal look
+    background = "#222222"
+    foreground = "#e4b5cb"
+    frame_color = "#9cc3c0"
+    highlight = "#e4b5cb, #83e6aa"
+
+    transparency = 0
+    separator_height = 6
+    padding = 12
+    horizontal_padding = 12
+    text_icon_padding = 8
+
+    frame_width = 1
+    gap_size = 6
+    separator_color = frame
+
+    corner_radius = 4
+    corners = all
+
+    font = 0xProto Nerd Font 11
+    line_height = 0
+    markup = full
+
+    # Small title, tiny body
+    format = "<span font='13'><b>%s</b></span>\n%b"
+
+    word_wrap = yes
+    alignment = left
+    vertical_alignment = center
+    show_age_threshold = -1
+    ellipsize = end
+    ignore_newline = no
+
+    stack_duplicates = true
+    hide_duplicate_count = true
+    show_indicators = false
+
+    # No big icons for now, just text glyphs
+    icon_position = off
+
+    # Thin horizontal bar
+    progress_bar = true
+    progress_bar_height = 3
+    progress_bar_frame_width = 0
+    progress_bar_min_width = 180
+    progress_bar_max_width = 330
+    progress_bar_corner_radius = 999
+    progress_bar_corners = all
+
+    mouse_left_click = close_current
+    mouse_middle_click = do_action, close_current
+    mouse_right_click = close_all
+
+[urgency_low]
+    background = "#222222"
+    foreground = "#e4b5cb"
+    frame_color = "#9cc3c0"
+    highlight = "#e4b5cb, #83e6aa"
+    timeout = 1
+
+[urgency_normal]
+    background = "#222222"
+    foreground = "#e4b5cb"
+    frame_color = "#9cc3c0"
+    highlight = "#e4b5cb, #83e6aa"
+    timeout = 1
+
+[urgency_critical]
+    background = "#52030b"
+    foreground = "#ffffff"
+    frame_color = "#ff0000"
+    highlight = "#c72ae6, #e4b5cb"
+    timeout = 0
+
+[volume]
+    appname = volume
+    set_stack_tag = volume
+    set_transient = true
+    timeout = 1
+
+[brightness]
+    appname = brightness
+    set_stack_tag = brightness
+    set_transient = true
+    timeout = 1

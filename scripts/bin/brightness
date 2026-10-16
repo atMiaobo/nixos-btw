@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+step="5%"
+
+case "${1:-}" in
+  up)
+    brightnessctl -c backlight set "$step+"
+    ;;
+  down)
+    brightnessctl -c backlight set "$step-"
+    ;;
+  *)
+    echo "Usage: brightness up|down" >&2
+    exit 1
+    ;;
+esac
+
+current="$(brightnessctl -c backlight get)"
+max="$(brightnessctl -c backlight max)"
+percent="$(( current * 100 / max ))"
+
+dunstify \
+  -a brightness \
+  -u low \
+  -h string:x-dunst-stack-tag:brightness \
+  -h int:value:"$percent" \
+  "󰃠 Brightness" "${percent}%"

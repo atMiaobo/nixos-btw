@@ -1,0 +1,367 @@
+#!/usr/bin/env bash
+
+set -uo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nix-headless"
+ENABLED_FILE="$STATE_DIR/enabled"
+ACTIVE_FILE="$STATE_DIR/active"
+
+mkdir -p "$STATE_DIR"
+
+INHIBIT_UNIT="nix-headless-inhibit.service"
+
+log() {
+    printf '[nix-headless] %s\n' "$*"
+}
+
+enabled() {
+    [[ -f "$ENABLED_FILE" ]] && [[ "$(cat "$ENABLED_FILE")" == "1" ]]
+}
+
+active() {
+    [[ -f "$ACTIVE_FILE" ]] && [[ "$(cat "$ACTIVE_FILE")" == "1" ]]
+}
+
+# ------------------------------------------------------------
+# systemd inhibitor
+# ------------------------------------------------------------
+
+start_inhibitor() {
+    systemctl --user is-active --quiet "$INHIBIT_UNIT" && return 0
+
+    local inhibit
+    local sleep_bin
+    local systemd_run
+
+    inhibit="$(command -v systemd-inhibit)"
+    sleep_bin="$(command -v sleep)"
+    systemd_run="$(command -v systemd-run)"
+
+    "$systemd_run" \
+        --user \
+        --unit="$INHIBIT_UNIT" \
+        --collect \
+        "$inhibit" \
+        --what=handle-lid-switch:handle-suspend-key \
+        --who=nix-headless \
+        --why="Headless SSH mode" \
+        --mode=block \
+        "$sleep_bin" infinity >/dev/null
+}
+
+stop_inhibitor() {
+    systemctl --user stop "$INHIBIT_UNIT" >/dev/null 2>&1 || true
+}
+
+# ------------------------------------------------------------
+# ASUS profile helpers
+# ------------------------------------------------------------
+
+get_asus_profile() {
+    command -v asusctl >/dev/null || return 0
+
+    local output
+
+    output="$(
+        asusctl profile get 2>/dev/null ||
+        asusctl profile -p 2>/dev/null ||
+        true
+    )"
+
+    printf '%s\n' "$output" |
+        grep -ioE 'LowPower|Quiet|Balanced|Performance' |
+        head -n1
+}
+
+set_asus_profile() {
+    command -v asusctl >/dev/null || return 0
+
+    local profile="$1"
+
+    asusctl profile set "$profile" >/dev/null 2>&1 ||
+        asusctl profile -P "$profile" >/dev/null 2>&1 ||
+        true
+}
+
+lowest_asus_profile() {
+    local profiles
+
+    profiles="$(
+        asusctl profile list 2>/dev/null ||
+        asusctl profile -l 2>/dev/null ||
+        true
+    )"
+
+    if grep -qi 'LowPower' <<< "$profiles"; then
+        printf 'LowPower\n'
+    else
+        printf 'Quiet\n'
+    fi
+}
+
+# ------------------------------------------------------------
+# Keyboard backlight
+# ------------------------------------------------------------
+
+save_and_disable_keyboard_backlight() {
+    command -v brightnessctl >/dev/null || return 0
+
+    local path
+    path="$(
+        find /sys/class/leds \
+            -maxdepth 1 \
+            \( -name '*kbd_backlight*' -o -name '*keyboard*backlight*' \) \
+            2>/dev/null |
+        head -n1
+    )"
+
+    [[ -n "$path" ]] || return 0
+
+    local dev
+    dev="$(basename "$path")"
+
+    printf '%s\n' "$dev" > "$STATE_DIR/kbd-device"
+    cat "$path/brightness" > "$STATE_DIR/kbd-brightness"
+
+    brightnessctl -q -d "$dev" set 0 >/dev/null 2>&1 || true
+}
+
+restore_keyboard_backlight() {
+    [[ -f "$STATE_DIR/kbd-device" ]] || return 0
+    [[ -f "$STATE_DIR/kbd-brightness" ]] || return 0
+
+    command -v brightnessctl >/dev/null || return 0
+
+    local dev
+    local brightness
+
+    dev="$(cat "$STATE_DIR/kbd-device")"
+    brightness="$(cat "$STATE_DIR/kbd-brightness")"
+
+    brightnessctl -q -d "$dev" set "$brightness" >/dev/null 2>&1 || true
+
+    rm -f "$STATE_DIR/kbd-device" "$STATE_DIR/kbd-brightness"
+}
+
+# ------------------------------------------------------------
+# Bluetooth
+# ------------------------------------------------------------
+
+save_and_disable_bluetooth() {
+    command -v rfkill >/dev/null || return 0
+
+    if rfkill list bluetooth 2>/dev/null |
+        grep -q 'Soft blocked: no'; then
+
+        touch "$STATE_DIR/bluetooth-was-on"
+        rfkill block bluetooth >/dev/null 2>&1 || true
+    fi
+}
+
+restore_bluetooth() {
+    if [[ -f "$STATE_DIR/bluetooth-was-on" ]]; then
+        rfkill unblock bluetooth >/dev/null 2>&1 || true
+        rm -f "$STATE_DIR/bluetooth-was-on"
+    fi
+}
+
+# ------------------------------------------------------------
+# Actual headless mode
+# ------------------------------------------------------------
+
+enter_headless() {
+    active && return 0
+
+    log "Entering headless mode"
+
+    printf '1\n' > "$ACTIVE_FILE"
+
+    # Save current ASUS power profile.
+    local profile
+    profile="$(get_asus_profile)"
+
+    if [[ -n "$profile" ]]; then
+        printf '%s\n' "$profile" > "$STATE_DIR/asus-profile"
+
+        local low
+        low="$(lowest_asus_profile)"
+
+        log "Power profile: $profile -> $low"
+        set_asus_profile "$low"
+    fi
+
+    save_and_disable_keyboard_backlight
+    save_and_disable_bluetooth
+
+    # Kill display scanout/panel power.
+    if command -v hyprctl >/dev/null; then
+        hyprctl dispatch dpms off >/dev/null 2>&1 || true
+    fi
+
+    log "Headless mode ACTIVE"
+}
+
+leave_headless() {
+    active || return 0
+
+    log "Leaving headless mode"
+
+    rm -f "$ACTIVE_FILE"
+
+    if command -v hyprctl >/dev/null; then
+        hyprctl dispatch dpms on >/dev/null 2>&1 || true
+    fi
+
+    restore_keyboard_backlight
+    restore_bluetooth
+
+    if [[ -f "$STATE_DIR/asus-profile" ]]; then
+        local profile
+        profile="$(cat "$STATE_DIR/asus-profile")"
+
+        log "Restoring ASUS profile: $profile"
+        set_asus_profile "$profile"
+
+        rm -f "$STATE_DIR/asus-profile"
+    fi
+
+    log "Normal mode restored"
+}
+
+# ------------------------------------------------------------
+# User-facing mode
+# ------------------------------------------------------------
+
+enable_mode() {
+    printf '1\n' > "$ENABLED_FILE"
+    start_inhibitor
+
+    log "Headless behaviour ENABLED"
+    log "Closing lid now enters headless mode instead of suspending."
+}
+
+disable_mode() {
+    leave_headless
+
+    rm -f "$ENABLED_FILE"
+    stop_inhibitor
+
+    log "Headless behaviour DISABLED"
+    log "Lid/Fn sleep behaviour returned to system defaults."
+}
+
+status() {
+    echo
+
+    if enabled; then
+        echo "Headless behaviour : ENABLED"
+    else
+        echo "Headless behaviour : DISABLED"
+    fi
+
+    if active; then
+        echo "Current state      : HEADLESS"
+    else
+        echo "Current state      : NORMAL"
+    fi
+
+    if systemctl --user is-active --quiet "$INHIBIT_UNIT"; then
+        echo "Lid inhibitor      : ACTIVE"
+    else
+        echo "Lid inhibitor      : inactive"
+    fi
+
+    echo
+}
+
+# ------------------------------------------------------------
+# Events
+# ------------------------------------------------------------
+
+lid_close() {
+    enabled || return 0
+    enter_headless
+}
+
+lid_open() {
+    active && leave_headless
+}
+
+sleep_key() {
+    # When disabled, do NOTHING.
+    # systemd-logind receives the hardware sleep key and suspends normally.
+    enabled || return 0
+
+    if active; then
+        leave_headless
+    else
+        enter_headless
+    fi
+}
+
+boot() {
+    # Re-establish inhibitor after login/reboot.
+    if enabled; then
+        start_inhibitor
+    else
+        stop_inhibitor
+    fi
+
+    # Never assume we are still headless after reboot.
+    rm -f "$ACTIVE_FILE"
+}
+
+case "${1:-status}" in
+    true|on|enable)
+        enable_mode
+        ;;
+
+    false|off|disable)
+        disable_mode
+        ;;
+
+    toggle)
+        if enabled; then
+            disable_mode
+        else
+            enable_mode
+        fi
+        ;;
+
+    enter)
+        enter_headless
+        ;;
+
+    leave)
+        leave_headless
+        ;;
+
+    lid-close)
+        lid_close
+        ;;
+
+    lid-open)
+        lid_open
+        ;;
+
+    sleep-key)
+        sleep_key
+        ;;
+
+    boot)
+        boot
+        ;;
+
+    status)
+        status
+        ;;
+
+    *)
+        echo "Usage:"
+        echo "  nix-headless true"
+        echo "  nix-headless false"
+        echo "  nix-headless toggle"
+        echo "  nix-headless status"
+        exit 1
+        ;;
+esac

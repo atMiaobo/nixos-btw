@@ -1,0 +1,10 @@
+[config]
+
+[config.wallpaper]
+set = false
+command = "awww"
+arguments = ["img"]
+
+[templates.fuzzel]
+input_path = "/home/mihao/.config/matugen/templates/fuzzel-colors.ini"
+output_path = "/home/mihao/.config/fuzzel/colors.ini"

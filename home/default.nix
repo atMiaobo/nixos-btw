@@ -6,6 +6,8 @@
     ./modules/spicetify.nix
     ./modules/media.nix
     ./modules/packages.nix
+    ./modules/scripts.nix
+    ./modules/desktop.nix
     ./modules/nixync.nix
   ];
 
