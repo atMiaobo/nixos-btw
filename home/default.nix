@@ -6,6 +6,7 @@
     ./modules/spicetify.nix
     ./modules/media.nix
     ./modules/packages.nix
+    ./modules/nixync.nix
   ];
 
   home.username = "mihao";

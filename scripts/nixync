@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# NIXYNC
+# Synchronize this machine's NixOS configuration with GitHub.
+# New, modified and deleted repository files are detected automatically.
+
+REPO="$HOME/nixos"
+AUTO_CONFIRM=false
+
+case "${1:-}" in
+  "") ;;
+  --yes) AUTO_CONFIRM=true ;;
+  --help|-h)
+    echo "Usage: nixync [--yes]"
+    echo "  nixync        Review, scan, commit and push."
+    echo "  nixync --yes  Scan, commit and push without confirmation."
+    exit 0
+    ;;
+  *)
+    echo "Unknown option: $1" >&2
+    exit 1
+    ;;
+esac
+
+die() {
+  echo "nixync: $*" >&2
+  exit 1
+}
+
+# Always operate on ~/nixos, regardless of the current directory.
+[[ -d "$REPO/.git" ]] || die "Missing Git repository: $REPO"
+cd "$REPO"
+
+[[ "$(git branch --show-current)" == "main" ]] ||
+  die "Expected branch main. Resolve branch changes manually."
+
+git remote get-url origin >/dev/null 2>&1 ||
+  die "No origin remote. Create/connect the GitHub repository first."
+
+command -v gitleaks >/dev/null ||
+  die "Gitleaks is missing. Activate the Home Manager module."
+
+[[ -z "$(git ls-files --unmerged)" ]] ||
+  die "Resolve Git merge conflicts first."
+
+# Discover everything within the repository.
+git add -A -- .
+
+echo
+echo "=== NIXYNC: Changes ==="
+git status --short
+
+echo
+git diff --cached --stat
+
+# Reject common sensitive filenames, including accidentally force-added files.
+unsafe=false
+
+while IFS= read -r -d '' file; do
+  case "$file" in
+    private/*|*/private/*|\
+    .env|*/.env|.env.*|*/.env.*|\
+    *.pem|*.key|*.p12|*.pfx|*.agekey|*.secret|\
+    id_rsa|*/id_rsa|id_ed25519|*/id_ed25519|\
+    *.sqlite|*.db)
+      echo "BLOCKED sensitive file: $file"
+      unsafe=true
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+[[ "$unsafe" == false ]] ||
+  die "Unstage and exclude sensitive files before syncing."
+
+# Scan the exact staged Git tree, not random files from $HOME.
+echo
+echo "=== NIXYNC: Scanning staged files ==="
+
+umask 077
+TEMP_DIR=$(mktemp -d)
+trap 'rm -rf -- "$TEMP_DIR"' EXIT
+
+git archive --format=tar "$(git write-tree)" |
+  tar -xf - -C "$TEMP_DIR"
+
+gitleaks dir --no-banner --redact "$TEMP_DIR" ||
+  die "Potential secret detected in the staged configuration."
+
+# Check existing commit history too.
+echo
+echo "=== NIXYNC: Scanning Git history ==="
+
+gitleaks git --no-banner --redact . ||
+  die "Potential secret detected in Git history."
+
+echo
+echo "Secret scans completed. Manual review is still recommended."
+
+# Confirm before publishing unless explicitly overridden.
+if [[ "$AUTO_CONFIRM" == false ]]; then
+  echo
+  read -r -p "Commit and push to origin/main? [y/N] " answer
+
+  case "${answer,,}" in
+    y|yes) ;;
+    *) echo "Cancelled. Changes remain staged."; exit 0 ;;
+  esac
+fi
+
+# Commit changed files. Do not create an empty commit.
+if ! git diff --cached --quiet; then
+  git commit -m "Sync NixOS configuration $(date '+%Y-%m-%d %H:%M')"
+else
+  echo "No new changes to commit."
+fi
+
+# Push the branch to GitHub.
+echo
+echo "=== NIXYNC: Pushing ==="
+
+git push -u origin main ||
+  die "Push failed. Local commits are safe; check the remote."
+
+echo
+echo "NIXYNC COMPLETE"
+echo "Local configuration synchronized with origin/main."
+git status --short
