@@ -7,8 +7,6 @@ set -euo pipefail
 
 REPO="$HOME/nixos"
 AUTO_CONFIRM=false
-CUSTOM_MESSAGE=false
-COMMIT_MESSAGE=""
 
 # Command-line options
 while (( $# > 0 )); do
@@ -17,33 +15,12 @@ while (( $# > 0 )); do
       AUTO_CONFIRM=true
       shift
       ;;
-
-    -m|--message)
-      if [[ "$CUSTOM_MESSAGE" == true ]]; then
-        echo "Commit message option specified twice." >&2
-        exit 1
-      fi
-
-      CUSTOM_MESSAGE=true
-      shift
-
-      # Accept an optional inline commit message.
-      # Without one, prompt interactively before committing.
-      if (( $# > 0 )) && [[ "$1" != -* ]]; then
-        COMMIT_MESSAGE="$1"
-        shift
-      fi
-      ;;
-
     --help|-h)
-      echo "Usage: nixync [--yes] [-m [message]]"
-      echo "  nixync           Automatic commit message."
-      echo "  nixync -m        Prompt for a commit message."
-      echo "  nixync -m TEXT   Use a custom commit message."
-      echo "  nixync --yes     Skip publishing confirmation."
+      echo "Usage: nixync [--yes]"
+      echo "  nixync        Ask for a commit message; Enter uses automatic."
+      echo "  nixync --yes  Commit and push automatically."
       exit 0
       ;;
-
     *)
       echo "Unknown option: $1" >&2
       exit 1
@@ -125,6 +102,21 @@ gitleaks git --no-banner --redact . ||
 echo
 echo "Secret scans completed. Manual review is still recommended."
 
+# Ask for a commit message, defaulting to the automatic timestamp.
+COMMIT_MESSAGE="Sync NixOS configuration $(date '+%Y-%m-%d %H:%M')"
+
+if ! git diff --cached --quiet && [[ "$AUTO_CONFIRM" == false ]]; then
+  [[ -t 0 ]] || die "Commit message prompt requires a terminal; use --yes for automatic mode."
+
+  echo
+  read -r -p "Commit message (Enter = automatic): " INPUT_MESSAGE ||
+    die "Could not read commit message."
+
+  if [[ -n "${INPUT_MESSAGE//[[:space:]]/}" ]]; then
+    COMMIT_MESSAGE="$INPUT_MESSAGE"
+  fi
+fi
+
 # Confirm before publishing unless explicitly overridden.
 if [[ "$AUTO_CONFIRM" == false ]]; then
   echo
@@ -138,19 +130,6 @@ fi
 
 # Commit changed files. Do not create an empty commit.
 if ! git diff --cached --quiet; then
-  if [[ "$CUSTOM_MESSAGE" == true ]]; then
-    if [[ -z "$COMMIT_MESSAGE" ]]; then
-      [[ -t 0 ]] || die "Interactive message requires a terminal."
-      read -r -p "Commit message: " COMMIT_MESSAGE ||
-        die "Could not read commit message."
-    fi
-
-    [[ -n "${COMMIT_MESSAGE//[[:space:]]/}" ]] ||
-      die "Commit message cannot be empty."
-  else
-    COMMIT_MESSAGE="Sync NixOS configuration $(date '+%Y-%m-%d %H:%M')"
-  fi
-
   git commit -m "$COMMIT_MESSAGE"
 else
   echo "No new changes to commit."
