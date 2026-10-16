@@ -7,21 +7,49 @@ set -euo pipefail
 
 REPO="$HOME/nixos"
 AUTO_CONFIRM=false
+CUSTOM_MESSAGE=false
+COMMIT_MESSAGE=""
 
-case "${1:-}" in
-  "") ;;
-  --yes) AUTO_CONFIRM=true ;;
-  --help|-h)
-    echo "Usage: nixync [--yes]"
-    echo "  nixync        Review, scan, commit and push."
-    echo "  nixync --yes  Scan, commit and push without confirmation."
-    exit 0
-    ;;
-  *)
-    echo "Unknown option: $1" >&2
-    exit 1
-    ;;
-esac
+# Command-line options
+while (( $# > 0 )); do
+  case "$1" in
+    --yes)
+      AUTO_CONFIRM=true
+      shift
+      ;;
+
+    -m|--message)
+      if [[ "$CUSTOM_MESSAGE" == true ]]; then
+        echo "Commit message option specified twice." >&2
+        exit 1
+      fi
+
+      CUSTOM_MESSAGE=true
+      shift
+
+      # Accept an optional inline commit message.
+      # Without one, prompt interactively before committing.
+      if (( $# > 0 )) && [[ "$1" != -* ]]; then
+        COMMIT_MESSAGE="$1"
+        shift
+      fi
+      ;;
+
+    --help|-h)
+      echo "Usage: nixync [--yes] [-m [message]]"
+      echo "  nixync           Automatic commit message."
+      echo "  nixync -m        Prompt for a commit message."
+      echo "  nixync -m TEXT   Use a custom commit message."
+      echo "  nixync --yes     Skip publishing confirmation."
+      exit 0
+      ;;
+
+    *)
+      echo "Unknown option: $1" >&2
+      exit 1
+      ;;
+  esac
+done
 
 die() {
   echo "nixync: $*" >&2
@@ -110,7 +138,20 @@ fi
 
 # Commit changed files. Do not create an empty commit.
 if ! git diff --cached --quiet; then
-  git commit -m "Sync NixOS configuration $(date '+%Y-%m-%d %H:%M')"
+  if [[ "$CUSTOM_MESSAGE" == true ]]; then
+    if [[ -z "$COMMIT_MESSAGE" ]]; then
+      [[ -t 0 ]] || die "Interactive message requires a terminal."
+      read -r -p "Commit message: " COMMIT_MESSAGE ||
+        die "Could not read commit message."
+    fi
+
+    [[ -n "${COMMIT_MESSAGE//[[:space:]]/}" ]] ||
+      die "Commit message cannot be empty."
+  else
+    COMMIT_MESSAGE="Sync NixOS configuration $(date '+%Y-%m-%d %H:%M')"
+  fi
+
+  git commit -m "$COMMIT_MESSAGE"
 else
   echo "No new changes to commit."
 fi
