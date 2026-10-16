@@ -1,0 +1,10 @@
+diff --git a/drivers/idle/intel_idle.c b/drivers/idle/intel_idle.c
+--- a/drivers/idle/intel_idle.c
++++ b/drivers/idle/intel_idle.c
+@@ -1653,6 +1653,7 @@ static const struct x86_cpu_id intel_idle_ids[] __initconst = {
+ 	X86_MATCH_VFM(INTEL_ALDERLAKE,		&idle_cpu_adl),
+ 	X86_MATCH_VFM(INTEL_ALDERLAKE_L,	&idle_cpu_adl_l),
+ 	X86_MATCH_VFM(INTEL_METEORLAKE_L,	&idle_cpu_mtl_l),
++	X86_MATCH_VFM(INTEL_ARROWLAKE_H,		&idle_cpu_ptl),
+ 	X86_MATCH_VFM(INTEL_PANTHERLAKE_L,	&idle_cpu_ptl),
+ 	X86_MATCH_VFM(INTEL_ATOM_GRACEMONT,	&idle_cpu_gmt),

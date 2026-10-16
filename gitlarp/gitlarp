@@ -1,0 +1,263 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    printf '%s\n' 'Usage: gitlarp commit' '       gitlarp undo' '       gitlarp mode [file|line|word]' '       gitlarp --help' '' \
+        'Commit changes using the repository mode (default: file).' \
+        'Includes staged, unstaged, deleted, and untracked files; respects .gitignore.'
+}
+
+die() {
+    printf 'gitlarp: %s\n' "$*" >&2
+    exit 1
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+    commit) [[ $# -eq 1 ]] || die 'commit takes no arguments.' ;;
+    undo) [[ $# -eq 1 ]] || die 'undo takes no arguments.' ;;
+    mode) [[ $# -le 2 ]] || die 'usage: gitlarp mode [file|line|word]' ;;
+    *) usage >&2; exit 1 ;;
+esac
+
+command -v git >/dev/null || die 'git is required.'
+[[ -z ${GIT_INDEX_FILE:-} ]] || die 'custom GIT_INDEX_FILE is not supported.'
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || die 'run this inside a Git repository.'
+cd "$repo_root"
+export GIT_LITERAL_PATHSPECS=1
+
+if [[ $1 == mode && $# -eq 2 ]]; then
+    case "$2" in
+        file|line|word) git config --local gitlarp.mode "$2" ;;
+        *) die 'mode must be file, line, or word.' ;;
+    esac
+fi
+mode=$(git config --get gitlarp.mode || true)
+mode=${mode:-file}
+case "$mode" in
+    file|line|word) ;;
+    *) die 'invalid gitlarp.mode; use gitlarp mode file|line|word.' ;;
+esac
+if [[ $1 == mode ]]; then
+    printf '%s\n' "$mode"
+    exit 0
+fi
+
+for operation in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply sequencer; do
+    [[ ! -e $(git rev-parse --git-path "$operation") ]] || die 'finish the current merge, rebase, cherry-pick, or revert first.'
+done
+[[ -z $(git ls-files --unmerged) ]] || die 'resolve conflicts first.'
+branch=$(git symbolic-ref --quiet HEAD) || die 'check out a branch first (HEAD is detached).'
+state_dir=$(git rev-parse --git-path gitlarp)
+state_file="$state_dir/last-run"
+
+if [[ $1 == undo ]]; then
+    [[ -f $state_file ]] || die 'no recorded commit run to undo.'
+    mapfile -t saved < "$state_file"
+    [[ ${#saved[@]} -eq 3 ]] || die 'invalid undo record.'
+    [[ $branch == "${saved[0]}" ]] || die 'switch back to the branch of the last gitlarp run first.'
+    current=$(git rev-parse --verify HEAD) || die 'the branch has no commits to undo.'
+    [[ $current == "${saved[2]}" ]] || die 'HEAD changed since the last gitlarp run; refusing to undo unrelated history.'
+    if [[ ${saved[1]} == unborn ]]; then
+        count=$(git rev-list --count "$current")
+        git update-ref -m 'gitlarp undo' -d "$branch" "$current"
+    else
+        git merge-base --is-ancestor "${saved[1]}" "$current" || die 'the recorded starting commit is not an ancestor of HEAD.'
+        count=$(git rev-list --count "${saved[1]}..$current")
+        git reset --soft "${saved[1]}"
+    fi
+    rm -f -- "$state_file"
+    printf 'Undid %s commit(s). Working files and staging are unchanged.\n' "$count"
+    exit 0
+fi
+
+if upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null); then
+    read -r ahead behind < <(git rev-list --left-right --count "HEAD...$upstream")
+    printf 'Upstream %s (cached): %s ahead, %s behind.\n' "$upstream" "$ahead" "$behind"
+else
+    printf 'No upstream configured; checking local changes.\n'
+fi
+
+status_file=$(mktemp)
+trap 'rm -f -- "$status_file"' EXIT
+git -c status.renames=false status --porcelain=v1 -z --untracked-files=all --ignore-submodules=none > "$status_file"
+paths=()
+while IFS= read -r -d '' entry; do
+    paths+=("${entry:3}")
+done < "$status_file"
+
+if [[ ${#paths[@]} -eq 0 ]]; then
+    printf 'Nothing to commit.\n'
+    exit 0
+fi
+
+git var GIT_AUTHOR_IDENT >/dev/null
+git var GIT_COMMITTER_IDENT >/dev/null
+start_head=$(git rev-parse --verify HEAD 2>/dev/null) || start_head=unborn
+mkdir -p -- "$state_dir"
+state_temp=$(mktemp "$state_dir/last-run.XXXXXX")
+trap 'rm -f -- "$status_file" "$state_temp"' EXIT
+
+record_run() {
+    printf '%s\n' "$branch" "$start_head" "$(git rev-parse --verify HEAD)" > "$state_temp"
+    mv -f -- "$state_temp" "$state_file"
+}
+
+if [[ $mode != file ]]; then
+    command -v python3 >/dev/null || die 'line and word modes require Python 3.'
+    python3 - "$mode" "$status_file" "$state_file" "$state_temp" "$branch" "$start_head" <<'PY'
+import difflib
+import itertools
+import os
+import re
+import subprocess
+import sys
+import tempfile
+
+
+def git(*args, data=None, env=None, capture=True):
+    return subprocess.run(
+        ["git", *args], input=data, env=env, check=True,
+        stdout=subprocess.PIPE if capture else None,
+    ).stdout
+
+
+def record_run():
+    state_file, state_temp, branch, start_head = sys.argv[3:7]
+    current = git("rev-parse", "--verify", "HEAD").decode().strip()
+    with open(state_temp, "w", encoding="utf-8", errors="surrogateescape") as record:
+        record.write(f"{branch}\n{start_head}\n{current}\n")
+    os.replace(state_temp, state_file)
+
+
+def entry(path, env):
+    record = git("ls-files", "--stage", "-z", "--", path, env=env)
+    if not record:
+        return None
+    metadata = record.split(b"\t", 1)[0].split()
+    return metadata[0].decode(), metadata[1].decode()
+
+
+def put(path, item, env=None):
+    if item is None:
+        git("update-index", "--force-remove", "--", path, env=env)
+    else:
+        git("update-index", "--add", "--cacheinfo", item[0], item[1], path, env=env)
+
+
+def text_blob(item):
+    if item is None:
+        return b""
+    if item[0] not in ("100644", "100755"):
+        return None
+    content = git("cat-file", "blob", item[1])
+    if b"\0" in content:
+        return None
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return content
+
+
+def changes(before, after, mode):
+    tokenize = bytes.splitlines if mode == "line" else None
+    old = tokenize(before, keepends=True) if tokenize else re.findall(rb"\s*\S+|\s+$", before)
+    new = tokenize(after, keepends=True) if tokenize else re.findall(rb"\s*\S+|\s+$", after)
+    opcodes = difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes()
+    total = sum(max(old_end - old_start, new_end - new_start)
+                for tag, old_start, old_end, new_start, new_end in opcodes if tag != "equal")
+    current = old[:]
+    offset = 0
+    number = 0
+    for tag, old_start, old_end, new_start, new_end in opcodes:
+        if tag == "equal":
+            continue
+        position = old_start + offset
+        for old_token, new_token in itertools.zip_longest(old[old_start:old_end], new[new_start:new_end]):
+            if old_token is None:
+                current.insert(position, new_token)
+                offset += 1
+            elif new_token is None:
+                del current[position]
+                offset -= 1
+            else:
+                current[position] = new_token
+            if new_token is not None:
+                position += 1
+            number += 1
+            yield b"".join(current), number, total
+
+
+def run():
+    mode = sys.argv[1]
+    with open(sys.argv[2], "rb") as status:
+        paths = [os.fsdecode(record[3:]) for record in status.read().split(b"\0") if record]
+    committed = 0
+    with tempfile.TemporaryDirectory(prefix="gitlarp-") as temporary:
+        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(temporary, "index"))
+        has_head = subprocess.run(["git", "rev-parse", "--verify", "HEAD"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        git("read-tree", "HEAD" if has_head else "--empty", env=env)
+        for path in paths:
+            original = entry(path, env)
+            git("add", "-A", "--", path, env=env)
+            target = entry(path, env)
+            put(path, original, env)
+            if original == target:
+                continue
+            before, after = text_blob(original), text_blob(target)
+            action = "Delete" if target is None else "Add" if original is None else "Update"
+            steps = changes(before, after, mode) if before is not None and after is not None else iter(())
+            had_steps = False
+            for content, number, total in steps:
+                had_steps = True
+                if number == total:
+                    intermediate = target
+                else:
+                    blob = git("hash-object", "-w", "--stdin", data=content).decode().strip()
+                    intermediate = ((target or original)[0], blob)
+                put(path, intermediate, env)
+                git("commit", "-m", f"{action} {path!r} ({mode} {number}/{total})", env=env, capture=False)
+                record_run()
+                committed += 1
+            if not had_steps:
+                put(path, target, env)
+                git("commit", "-m", f"{action} {path!r}", env=env, capture=False)
+                record_run()
+                committed += 1
+            put(path, target)
+    print(f"Created {committed} commit(s) in {mode} mode.")
+
+
+try:
+    run()
+except (subprocess.CalledProcessError, OSError) as error:
+    print(f"gitlarp: stopped: {error}. Earlier commits remain; working files were not rewritten.", file=sys.stderr)
+    sys.exit(1)
+except KeyboardInterrupt:
+    print("gitlarp: interrupted; earlier commits remain.", file=sys.stderr)
+    sys.exit(130)
+PY
+    exit 0
+fi
+committed=0
+for path in "${paths[@]}"; do
+    if [[ ! -e "$path" && ! -L "$path" ]]; then
+        action=Delete
+    elif git cat-file -e "HEAD:$path" 2>/dev/null; then
+        action=Update
+    else
+        action=Add
+    fi
+    git add -A -- "$path"
+    if git diff --cached --quiet -- "$path"; then
+        printf 'Skipping %q (no committable change).\n' "$path"
+        continue
+    fi
+    printf -v display_path '%q' "$path"
+    git commit --only -m "$action $display_path" -- "$path"
+    record_run
+    committed=$((committed + 1))
+done
+printf 'Created %s commit(s).\n' "$committed"
