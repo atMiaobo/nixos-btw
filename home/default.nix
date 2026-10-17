@@ -9,6 +9,7 @@
     ./modules/scripts.nix
     ./modules/desktop.nix
     ./modules/nixync.nix
+    ./modules/claude-local.nix
   ];
 
   home.username = "mihao";
@@ -19,3 +20,4 @@
   xdg.configFile."uwsm/env".source =
     "${config.home.sessionVariablesPackage}/etc/profile.d/hm-session-vars.sh";
 }
+
