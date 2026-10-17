@@ -214,20 +214,6 @@
 
 
 
-  # Local AI inference
-  services.ollama = {
-    enable = true;
-    package = pkgs.ollama-cuda;
-
-    host = "127.0.0.1";
-    port = 11434;
-
-    environmentVariables = {
-      OLLAMA_CONTEXT_LENGTH = "65536";
-    };
-  };
-
-
   #Environment system packages
   environment.systemPackages = with pkgs; [
   kdePackages.dolphin
@@ -320,7 +306,10 @@
   inputs.nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.codex
   claude-code
   chatgpt-cli
-  ollama-cuda
+  (import inputs.nixpkgs-unstable {
+    system = pkgs.stdenv.hostPlatform.system;
+    config.allowUnfree = true;
+  }).ollama-cuda
   ];
 
 

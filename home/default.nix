@@ -10,6 +10,7 @@
     ./modules/desktop.nix
     ./modules/nixync.nix
     ./modules/claude-local.nix
+    ./modules/ollama.nix
   ];
 
   home.username = "mihao";
