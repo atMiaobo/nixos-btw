@@ -235,7 +235,7 @@
   p7zip
 
   git
-  (import ./gitlarp { inherit pkgs; })
+  (import ./tools/gitlarp { inherit pkgs; })
   vim-full
   neovim
   glow
