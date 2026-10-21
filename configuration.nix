@@ -147,6 +147,10 @@
   virtualisation.spiceUSBRedirection.enable = true;
 
 
+  #PODMAN
+  virtualisation.podman.enable = true;
+
+
 
   users.users.mihao = {
   isNormalUser = true;
