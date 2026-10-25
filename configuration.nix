@@ -229,10 +229,11 @@
   kdePackages.qtsvg
 
   #For raw:
-  kdePackages.gwenview
-  darktable
-  rawtherapee
-  libraw
+  #kdePackages.gwenview
+  #darktable
+  #rawtherapee
+  #libraw
+  
 
   #Virtualization
   dnsmasq
