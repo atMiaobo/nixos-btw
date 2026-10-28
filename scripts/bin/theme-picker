@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-PIDFILE="/tmp/theme-picker.pid"
+config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/quickshell"
+runtime_dir="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}"
+PIDFILE="$runtime_dir/mihao-theme-picker.pid"
+LOGFILE="$runtime_dir/mihao-theme-picker.log"
 
 if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
   kill "$(cat "$PIDFILE")" 2>/dev/null || true
   rm -f "$PIDFILE"
 else
-  qs -c theme-picker >/tmp/theme-picker.log 2>&1 &
+  qs --path "$config_dir/theme-picker.qml" >"$LOGFILE" 2>&1 &
   echo $! > "$PIDFILE"
 fi

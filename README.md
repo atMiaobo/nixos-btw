@@ -10,3 +10,6 @@ Anyway wanna upload some videos and photos showcasing my rice, and gonna link so
 
 also this repo is mainly for me anyway in case I fuck up terribly one day, which I have been hypervigilantly warned by the very person who got me into nix lmaoo . . . .  but maybe some of the stuff
 here can help or inspire you too.
+
+Dynamic wallpaper and application themes are documented in [THEMING.md](THEMING.md),
+including Kitty presets, saved wallpaper palettes, temporary overrides and resets.

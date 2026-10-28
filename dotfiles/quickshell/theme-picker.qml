@@ -1,12 +1,15 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import qs.shared
 
 import QtQuick
 import QtQuick.Layouts
 
 Scope {
   id: root
+
+  readonly property bool validateOnly: Quickshell.env("MIHAO_QS_VALIDATE") === "1"
 
   ThemeStore {
     id: theme
@@ -15,6 +18,8 @@ Scope {
   property var themes: []
   property int selectedIndex: 0
   property bool applying: false
+  property string errorText: ""
+  readonly property string themeCommand: Quickshell.env("HOME") + "/.local/bin/theme"
 
   // Theme-driven colors. Layout and behavior remain static.
   property color bg:
@@ -64,15 +69,8 @@ Scope {
     return themes[i].path;
   }
 
-  function themeId(i) {
-    if (i < 0 || i >= themes.length)
-      return "catppuccin-macchiato";
-
-    return themes[i].themeId || "catppuccin-macchiato";
-  }
-
   function move(delta) {
-    if (themes.length === 0)
+    if (applying || themes.length === 0)
       return;
 
     selectedIndex =
@@ -83,7 +81,7 @@ Scope {
     Quickshell.execDetached([
       "rm",
       "-f",
-      "/tmp/theme-picker.pid"
+      (Quickshell.env("XDG_RUNTIME_DIR") || Quickshell.env("TMPDIR") || "/tmp") + "/mihao-theme-picker.pid"
     ]);
 
     Qt.quit();
@@ -95,77 +93,64 @@ Scope {
 
     applying = true;
 
-    const path = themePath(selectedIndex);
-    const selectedThemeId = themeId(selectedIndex);
+    errorText = "";
+    const entry = themes[selectedIndex];
+    const command = [themeCommand, "apply", entry.path, "--name", entry.name];
+    if (entry.explicit)
+      command.push("--theme", entry.theme);
+    applyProc.exec(command);
+  }
 
-    if (path.length > 0) {
-      Quickshell.execDetached([
-        "/home/mihao/.local/bin/theme",
-        path,
-        selectedThemeId
-      ]);
+  Process {
+    id: applyProc
+    stderr: StdioCollector {
+      onStreamFinished: root.errorText = this.text.trim()
     }
-
-    cleanupAndQuit();
+    onExited: (exitCode) => {
+      root.applying = false;
+      if (exitCode === 0) {
+        root.cleanupAndQuit();
+      } else if (root.errorText.length === 0) {
+        root.errorText = "Theme application failed (exit " + exitCode + "). Run theme status.";
+      }
+    }
   }
 
   function cancel() {
+    if (applying)
+      return;
     cleanupAndQuit();
   }
 
   function loadThemes(text) {
-    const lines = text.trim().split("\n");
-    const parsed = [];
-
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-
-      if (line.length === 0 || line.startsWith("#"))
-        continue;
-
-      const parts = line.split("|");
-
-      if (parts.length < 2)
-        continue;
-
-      const name = parts[0].trim();
-      const path = parts[1].trim();
-      const selectedThemeId =
-        parts.length >= 3 && parts[2].trim().length > 0
-          ? parts[2].trim()
-          : "catppuccin-macchiato";
-
-      if (name.length > 0 && path.length > 0) {
-        parsed.push({
-          name: name,
-          path: path,
-          themeId: selectedThemeId
-        });
-      }
+    try {
+      themes = JSON.parse(text);
+      selectedIndex = 0;
+    } catch (error) {
+      errorText = "Could not load wallpaper registry: " + error;
     }
-
-    themes = parsed;
-    selectedIndex = 0;
   }
 
   Process {
     id: themeListProc
-
     stdout: StdioCollector {
+      onStreamFinished: root.loadThemes(this.text)
+    }
+    stderr: StdioCollector {
       onStreamFinished: {
-        root.loadThemes(this.text);
+        if (this.text.trim().length > 0)
+          root.errorText = this.text.trim();
       }
     }
   }
 
   Component.onCompleted: {
-    themeListProc.exec([
-      "bash",
-      "-lc",
-      "cat \"$HOME/.config/themes/wallpapers\" 2>/dev/null || true"
-    ]);
+    if (!root.validateOnly)
+      themeListProc.exec([themeCommand, "list", "--json"])
   }
 
+  // Native import checks can run without a compositor or popup side effects.
+  //@ if env("MIHAO_QS_VALIDATE") !== "1"
   Variants {
     model: Quickshell.screens
 
@@ -187,7 +172,7 @@ Scope {
 
       exclusionMode: ExclusionMode.Ignore
       aboveWindows: true
-      focusable: true
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
       color: root.overlayBg
 
@@ -337,13 +322,15 @@ Scope {
                 anchors.centerIn: parent
 
                 visible:
-                  wallpaperPreview.status === Image.Error
+                  wallpaperPreview.status === Image.Error || root.errorText.length > 0
 
-                text: "Could not load wallpaper preview"
+                text: root.errorText || "Could not load wallpaper preview"
+                width: parent.width - 24
+                wrapMode: Text.Wrap
+                horizontalAlignment: Text.AlignHCenter
                 color: root.text
                 font.family: "JetBrainsMono Nerd Font"
                 font.pixelSize: 13
-                horizontalAlignment: Text.AlignHCenter
               }
 
               Rectangle {
@@ -360,7 +347,7 @@ Scope {
                   anchors.rightMargin: 14
 
                   text: root.themes.length > 0
-                    ? root.themeName(root.selectedIndex)
+                    ? (root.applying ? "Applying: " : "") + root.themeName(root.selectedIndex)
                     : "No themes"
 
                   color: root.selectedText
@@ -472,6 +459,7 @@ Scope {
 
                   MouseArea {
                     anchors.fill: parent
+                    enabled: !root.applying
                     cursorShape: Qt.PointingHandCursor
 
                     onClicked: {
@@ -492,5 +480,18 @@ Scope {
       }
     }
   }
+  //@ endif
+
+  //@ if env("MIHAO_QS_VALIDATE") === "1"
+  Timer {
+    interval: 200
+    running: true
+    onTriggered: {
+      console.log("VALIDATED theme-picker", Quickshell.shellDir, theme.primary)
+      Qt.quit()
+    }
+  }
+  //@ endif
+
 }
 
