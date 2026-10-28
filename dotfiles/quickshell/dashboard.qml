@@ -1,11 +1,14 @@
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import qs.shared
 import QtQuick
 import QtQuick.Layouts
 
 Scope {
   id: root
+
+  readonly property bool validateOnly: Quickshell.env("MIHAO_QS_VALIDATE") === "1"
 
   ThemeStore {
     id: theme
@@ -32,7 +35,7 @@ Scope {
 
   // Text hierarchy.
   property color primaryText:
-    theme.colors.foreground
+    theme.foreground
 
   property color secondaryText:
     theme.colors.foreground_alt
@@ -42,10 +45,10 @@ Scope {
 
   // Highlights.
   property color accentColor:
-    theme.colors.accent
+    theme.primary
 
   property color accentAltColor:
-    theme.colors.accent_alt
+    theme.secondary
 
   // Status colors.
   property color successColor:
@@ -312,7 +315,7 @@ Scope {
   Timer {
     interval: 1000
     repeat: true
-    running: true
+    running: !root.validateOnly
     onTriggered: root.updateTime()
   }
 
@@ -320,39 +323,39 @@ Scope {
   Timer {
     interval: 300000
     repeat: true
-    running: true
+    running: !root.validateOnly
     onTriggered: root.refreshWeather()
   }
 
   Timer {
     interval: 15000
     repeat: true
-    running: true
+    running: !root.validateOnly
     onTriggered: root.refreshBattery()
   }
 
   Timer {
     interval: 10000
     repeat: true
-    running: true
+    running: !root.validateOnly
     onTriggered: root.refreshNetwork()
   }
 
   Timer {
     interval: 15000
     repeat: true
-    running: true
+    running: !root.validateOnly
     onTriggered: root.refreshBluetooth()
   }
 
   Timer {
     interval: 2000
     repeat: true
-    running: true
+    running: !root.validateOnly
     onTriggered: root.refreshMedia()
   }
 
-  Component.onCompleted: root.refreshAll()
+  Component.onCompleted: { if (!root.validateOnly) root.refreshAll() }
 
   // ── Reusable row component ────────────────────────────────────────────────
   component StatusRow: RowLayout {
@@ -383,6 +386,8 @@ Scope {
     }
   }
 
+  // Native import checks can run without a compositor or popup side effects.
+  //@ if env("MIHAO_QS_VALIDATE") !== "1"
   Variants {
     model: Quickshell.screens
 
@@ -565,5 +570,18 @@ Scope {
       }
     }
   }
+  //@ endif
+
+  //@ if env("MIHAO_QS_VALIDATE") === "1"
+  Timer {
+    interval: 200
+    running: true
+    onTriggered: {
+      console.log("VALIDATED dashboard", Quickshell.shellDir, theme.primary)
+      Qt.quit()
+    }
+  }
+  //@ endif
+
 }
 

@@ -1,28 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
-wallpaper="${1:-}"
-
-if [ -z "$wallpaper" ]; then
-  echo "Usage: theme /path/to/wallpaper" >&2
-  exit 1
-fi
-
-if [ ! -f "$wallpaper" ]; then
-  echo "Wallpaper not found: $wallpaper" >&2
-  exit 1
-fi
-
-mkdir -p "$HOME/.cache/mihao"
-
-if ! pgrep -x awww-daemon >/dev/null; then
-  awww-daemon >/tmp/awww-daemon.log 2>&1 &
-  sleep 0.2
-fi
-
-awww img "$wallpaper"
-matugen image "$wallpaper"
-
-printf '%s\n' "$wallpaper" > "$HOME/.cache/mihao/current-wallpaper"
-
-echo "Applied theme from: $wallpaper"
+#!/usr/bin/env python3
+"""Resolve HM's out-of-store symlink before importing the shared implementation."""
+from pathlib import Path
+import sys
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from theming.cli import main
+raise SystemExit(main())
