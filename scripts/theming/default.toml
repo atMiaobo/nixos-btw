@@ -1,0 +1,45 @@
+# Universal theme schema 1. See THEMING.md.
+
+
+[meta]
+name = "Catppuccin Macchiato"
+mode = "dark"
+schema = 1
+
+[ui]
+background = "#24273a"
+surface = "#363a4f"
+surface_alt = "#494d64"
+foreground = "#cad3f5"
+muted = "#a5adcb"
+primary = "#c6a0f6"
+secondary = "#b7bdf8"
+border = "#6e738d"
+success = "#a6da95"
+warning = "#eed49f"
+error = "#ed8796"
+
+[terminal]
+background = "#24273a"
+foreground = "#cad3f5"
+cursor = "#c6a0f6"
+selection_bg = "#494d64"
+selection_fg = "#cad3f5"
+
+[ansi]
+black = "#363a4f"
+red = "#d99696"
+green = "#96d999"
+yellow = "#d9ca96"
+blue = "#96add9"
+magenta = "#cc96d9"
+cyan = "#96d9d9"
+white = "#cad3f5"
+bright_black = "#a5adcb"
+bright_red = "#e7bcbc"
+bright_green = "#bce7bd"
+bright_yellow = "#e7ddbc"
+bright_blue = "#bccae7"
+bright_magenta = "#debce7"
+bright_cyan = "#bce7e7"
+bright_white = "#cad3f5"
