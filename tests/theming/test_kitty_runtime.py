@@ -76,6 +76,34 @@ class KittySignals(unittest.TestCase):
             with self.assertRaisesRegex(ThemeError, 'delivery failed for PID 100'):
                 signal_instances(self.proc)
 
+    def test_each_process_configuration_is_verified_before_reload(self):
+        self.process(100, 'kitty', '--config', '/fixture/kitty.conf', '-o', 'font_size=23')
+        options = SimpleNamespace(config=['/fixture/kitty.conf'], override=['font_size=23'])
+        modules = {'kitty.cli': SimpleNamespace(parse_args=Mock(return_value=(options, []))),
+                   'kitty.cli_stub': SimpleNamespace(CLIOptions=object)}
+        events = []
+        with patch.dict(sys.modules, modules), \
+             patch('theming.kitty_runtime.verify_effective', side_effect=lambda *a, **kw: events.append(('verify', a, kw))), \
+             patch('theming.kitty_runtime.os.kill', side_effect=lambda *a: events.append(('signal', a))):
+            result = signal_instances(self.proc, output='/fixture/generated/kitty.conf')
+        self.assertEqual(result['signaled'], [100])
+        self.assertEqual(events, [
+            ('verify', ('PID 100', '/fixture/generated/kitty.conf'),
+             dict(config_paths=options.config, overrides=options.override)),
+            ('signal', (100, signal.SIGUSR1))])
+
+    def test_existing_process_palette_conflict_prevents_signal_and_success(self):
+        self.process(100, 'kitty', '-o', 'background=red')
+        options = SimpleNamespace(config=[], override=['background=red'])
+        modules = {'kitty.cli': SimpleNamespace(parse_args=Mock(return_value=(options, []))),
+                   'kitty.cli_stub': SimpleNamespace(CLIOptions=object)}
+        with patch.dict(sys.modules, modules), \
+             patch('theming.kitty_runtime.verify_effective', side_effect=ThemeError('effective palette differs')), \
+             patch('theming.kitty_runtime.os.kill') as kill:
+            with self.assertRaisesRegex(ThemeError, 'Kitty PID 100.*effective palette differs'):
+                signal_instances(self.proc, output='/fixture/generated/kitty.conf')
+        kill.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

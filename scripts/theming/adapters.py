@@ -162,16 +162,33 @@ def render(app: str, theme: dict, theme_path: Path, override=None):
             if key not in KITTY_KEYS:
                 raise ThemeError(f'kitty: unsupported property {key!r}')
         text = '\n'.join(f'{k} {v}' for k, v in values.items()) + '\n'
-        # Use Kitty's own parser for native named colors and validation (no GUI).
+        # Complete the color palette with this Kitty version's native defaults.
+        # Otherwise an earlier current-theme.conf leaks unspecified colors into
+        # universal/partial/file presets (including the empty native Default).
+        # Read only color options with a serializable default. Empty defaults
+        # (e.g. transparent_background_colors) are not valid config lines; any
+        # conflicting inherited value is still caught by the effective verifier.
+        # Fonts, opacity and bindings stay in kitty.conf.
         script = ('import json,sys; from kitty.config import parse_config; '
-                  'errors=[]; parse_config(sys.stdin.read().splitlines(), accumulate_bad_lines=errors); '
-                  'print(json.dumps([str(e) for e in errors]))')
+                  'from kitty.options.definition import definition; from kitty.conf.types import Option; '
+                  'keys=set(json.loads(sys.argv[1])); '
+                  'defaults={o.name:o.defval_as_string for o in definition.iter_all_options() '
+                  'if isinstance(o,Option) and o.name in keys and o.defval_as_string}; '
+                  'lines=[k+" "+v for k,v in defaults.items()] + sys.stdin.read().splitlines(); '
+                  'errors=[]; parse_config(lines, accumulate_bad_lines=errors); '
+                  'print(json.dumps(dict(errors=[str(e) for e in errors], defaults=defaults)))')
         try:
-            errors = json.loads(run(['kitty', '+runpy', script], input=text))
-        except ValueError as exc:
+            result = json.loads(run(['kitty', '+runpy', script, json.dumps(sorted(KITTY_KEYS))], input=text))
+            errors = result['errors']
+            defaults = result['defaults']
+            if not isinstance(errors, list) or not isinstance(defaults, dict) or set(defaults) - KITTY_KEYS:
+                raise ValueError('invalid color defaults or errors')
+        except (ValueError, KeyError, TypeError) as exc:
             raise ThemeError(f'Kitty validation returned invalid JSON: {exc}') from exc
         if errors:
             raise ThemeError('Invalid Kitty colors: ' + '; '.join(errors))
+        values = dict(defaults, **values)
+        text = '\n'.join(f'{k} {v}' for k, v in values.items()) + '\n'
     elif app == 'quickshell':
         for key, value in values.items():
             if key not in theme['ui']:

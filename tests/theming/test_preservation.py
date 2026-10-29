@@ -113,16 +113,24 @@ class SourcePreservation(unittest.TestCase):
 
     def test_only_color_include_changes_in_main_kitty_and_fuzzel(self):
         for app, name, old, new in (
-            ('kitty', 'kitty.conf', 'include current-theme.conf',
-             'include ~/.local/share/mihao-theme/kitty.conf'),
+            ('kitty', 'kitty.conf', '# END_KITTY_THEME\n',
+             '# END_KITTY_THEME\n\n'
+             '# Wallpaper colors follow the native block so kitten themes cannot replace this\n'
+             '# include. Native presets remain available; theme apply restores saved colors.\n'
+             'include ~/.local/share/mihao-theme/kitty.conf\n'),
             ('fuzzel', 'fuzzel.ini', 'include=~/.config/fuzzel/colors.ini',
              'include=~/.local/share/mihao-theme/fuzzel.ini'),
         ):
             rel = f'dotfiles/{app}/{name}'
             original = baseline(rel).decode()
             actual = (REPO / rel).read_text()
-            self.assertEqual(actual, original.replace(old, new))
+            expected = original if new in original else original.replace(old, new)
+            self.assertEqual(actual, expected)
             self.assertEqual(actual.count(new), 1)
+            if app == 'kitty':
+                self.assertEqual(actual.count('include current-theme.conf'), 1)
+                self.assertLess(actual.index('# END_KITTY_THEME'),
+                                actual.index('include ~/.local/share/mihao-theme/kitty.conf'))
 
     def test_dunst_main_rules_and_unrelated_app_files_are_original(self):
         for row in subprocess.check_output(['git', '-C', str(REPO), 'ls-tree', '-r', 'HEAD',
