@@ -103,15 +103,26 @@ Scope {
 
   Process {
     id: applyProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        if (this.text.trim().length > 0)
+          console.log("Theme apply output:", this.text);
+      }
+    }
     stderr: StdioCollector {
-      onStreamFinished: root.errorText = this.text.trim()
+      onStreamFinished: {
+        if (this.text.trim().length > 0)
+          console.warn("Theme apply diagnostics:", this.text);
+      }
     }
     onExited: (exitCode) => {
       root.applying = false;
       if (exitCode === 0) {
         root.cleanupAndQuit();
-      } else if (root.errorText.length === 0) {
-        root.errorText = "Theme application failed (exit " + exitCode + "). Run theme status.";
+      } else {
+        root.errorText = exitCode === 3
+          ? "Some colors could not be applied. Run theme status."
+          : "Could not apply wallpaper theme. See picker log.";
       }
     }
   }
@@ -127,7 +138,8 @@ Scope {
       themes = JSON.parse(text);
       selectedIndex = 0;
     } catch (error) {
-      errorText = "Could not load wallpaper registry: " + error;
+      console.warn("Wallpaper registry diagnostics:", error);
+      errorText = "Could not load wallpaper list. See picker log.";
     }
   }
 
@@ -139,8 +151,12 @@ Scope {
     stderr: StdioCollector {
       onStreamFinished: {
         if (this.text.trim().length > 0)
-          root.errorText = this.text.trim();
+          console.warn("Wallpaper list diagnostics:", this.text);
       }
+    }
+    onExited: (exitCode) => {
+      if (exitCode !== 0)
+        root.errorText = "Could not load wallpaper list. See picker log.";
     }
   }
 
@@ -325,8 +341,11 @@ Scope {
                   wallpaperPreview.status === Image.Error || root.errorText.length > 0
 
                 text: root.errorText || "Could not load wallpaper preview"
+                textFormat: Text.PlainText
                 width: parent.width - 24
                 wrapMode: Text.Wrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
                 horizontalAlignment: Text.AlignHCenter
                 color: root.text
                 font.family: "JetBrainsMono Nerd Font"

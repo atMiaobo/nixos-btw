@@ -46,7 +46,8 @@ elif name == 'kitty':
     assert args[0] == '+runpy'
     if 'parse_config' in args[1]:
         data = sys.stdin.read()
-        print(json.dumps(['invalid native color'] if 'wrongcolor' in data else []))
+        print(json.dumps(dict(errors=['invalid native color'] if 'wrongcolor' in data else [],
+                              defaults={'background':'#000000', 'foreground':'#dddddd'})))
     elif 'theming.kitty_runtime' in args[1]:
         if os.environ.get('MOCK_KITTY_PALETTE_MISMATCH'):
             print('Kitty effective palette differs: background', file=sys.stderr)
@@ -212,7 +213,8 @@ class ThemeTests(unittest.TestCase):
         self.cli('kitty', 'Tokyo Night', '--save')
         self.cli('kitty', '--universal', '--save')
         self.assertEqual(read_toml(self.saved)['apps']['kitty'], {'source':'universal'})
-        self.assertIn('background #182025', (self.cache/'generated/kitty.conf').read_text())
+        self.assertIn('background ' + read_toml(self.saved)['terminal']['background'],
+                      (self.cache/'generated/kitty.conf').read_text())
 
     def test_save_creates_missing_implicit_theme(self):
         self.apply()
@@ -235,7 +237,8 @@ class ThemeTests(unittest.TestCase):
         self.cli('kitty', 'Tokyo Night')
         self.cli('reset', 'kitty')
         self.assertNotIn('kitty', self.state()['temporary'])
-        self.assertIn('background #182025', (self.cache/'generated/kitty.conf').read_text())
+        self.assertIn('background ' + read_toml(self.saved)['terminal']['background'],
+                      (self.cache/'generated/kitty.conf').read_text())
         self.assertEqual(len(self.calls('awww')), 2)
         self.assertEqual(len(self.calls('dunstctl')), 1)
 
@@ -465,7 +468,7 @@ class ThemeTests(unittest.TestCase):
     def test_default_native_preset_does_not_substitute_universal(self):
         self.apply()
         self.cli('kitty', 'Default')
-        self.assertNotIn('#182025', (self.cache/'generated/kitty.conf').read_text())
+        self.assertIn('background #000000', (self.cache/'generated/kitty.conf').read_text())
 
     def test_dunst_stopped_stages_appearance_for_future_launch(self):
         self.cli('apply', 'Princess Mononoke', env=dict(self.env, MOCK_NO_DUNST='1'))
@@ -634,7 +637,8 @@ class ThemeTests(unittest.TestCase):
         self.assertIn('bridge', result.stderr)
         # The single Kitty invocation validates colors; no live reload occurs.
         self.assertEqual(len(self.calls('kitty')), before + 1)
-        self.assertIn('background #182025', (self.cache/'generated/kitty.conf').read_text())
+        self.assertIn('background ' + read_toml(self.saved)['terminal']['background'],
+                      (self.cache/'generated/kitty.conf').read_text())
         status = json.loads(self.cli('status', '--json').stdout)
         self.assertIn('failed:', status['deployment']['kitty'])
 
@@ -778,7 +782,8 @@ class ThemeTests(unittest.TestCase):
         self.cli('kitty', 'Default', env=dict(self.env, KITTY_LISTEN_ON='unix:/tmp/kitty socket'))
         self.assertFalse(any(c[1] == '@' for c in self.calls('kitten')))
         self.assertIn('theming.kitty_runtime', self.calls('kitty')[-1][2])
-        self.assertFalse((self.cache/'generated/kitty.conf').read_text().strip())
+        self.assertEqual((self.cache/'generated/kitty.conf').read_text(),
+                         'background #000000\nforeground #dddddd\n')
 
     def test_kitty_no_gui_is_staged_without_claiming_delivery(self):
         self.cli('apply', 'Princess Mononoke', env=dict(self.env, MOCK_KITTY_PIDS='[]'))

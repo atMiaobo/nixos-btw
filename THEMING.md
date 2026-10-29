@@ -17,7 +17,7 @@ native includes find a configurable cache without modifying repository files.
 
 | App | Consumed color layer | Preserved configuration |
 | --- | --- | --- |
-| Kitty | `include ~/.local/share/mihao-theme/kitty.conf` | Original `kitty.conf`, with only its color include changed. Native presets are dumped, filtered to colors and validated without editing the main config. |
+| Kitty | Final `include ~/.local/share/mihao-theme/kitty.conf`, after the native theme block | Original preferences and native theme block retained. Presets are dumped, filtered to colors and validated without editing the main config. |
 | Fuzzel | `include=~/.local/share/mihao-theme/fuzzel.ini` | Original `fuzzel.ini`, with only its color include changed. Absolute or `~/` include paths are required. |
 | Dunst | Existing `dunstrc.d/99-theme.conf` becomes a relative symlink to the bridge's `dunst.conf` | Original `dunstrc` is byte-identical to Git HEAD, including notification rules. |
 | Hyprland | Original `require("theme")` reads the updated `theme.lua`, which falls back to the original palette and loads cached borders | Both main configs are byte-identical to HEAD. Runtime `hyprctl eval` updates only active/inactive border colors through `hl.config`; it never reloads the compositor. |
@@ -134,6 +134,42 @@ JSON output, so it cannot run the old configured templates. Animated WebP
 extraction is isolated. Existing per-wallpaper definitions are not regenerated
 on reselection. Explicit regeneration backs up the TOML and retains overrides.
 
+Newly generated dark palettes elevate background/surface/surface-alt to minimum
+Oklab lightness values of 0.30/0.36/0.42. They retain the extracted source hue at
+35% of its chroma, capped at 0.05, with text contrast of at least 4.5:1 and
+status/accent contrast of at least 3:1 on all three surfaces. Matugen's tonal-spot
+scheme remains in use; switching schemes alone still produces near-black
+neutral surfaces. Achromatic images use a neutral extraction fallback. Light
+surface roles are unchanged. This transformation runs only during extraction;
+saved TOMLs and explicitly configured application palettes remain authoritative.
+To opt an existing wallpaper into these defaults, use `theme regenerate NAME`
+(creates a backup and retains app overrides), then `theme apply NAME`.
+
+The final Kitty include is outside `BEGIN_KITTY_THEME`/`END_KITTY_THEME`, so
+native `kitten themes` edits cannot replace it. Generated files explicitly reset
+supported color roles with serializable defaults to the installed Kitty version's
+defaults before applying the selected palette. Sparse files and the native `Default` preset therefore
+cannot inherit leftover native theme colors. Only color settings are generated.
+The engine include takes precedence even on native config reloads; use the
+theme CLI for temporary or saved Kitty choices. Every wallpaper selection
+rewrites the generated file and verifies the effective config before requesting
+SIGUSR1 reload. Saved per-wallpaper overrides take precedence over universal
+colors, including on same-wallpaper reselection.
+
+The picker displays only concise exit-code-based feedback. Full apply stdout
+and stderr (including successful warnings) and registry diagnostics go to the
+existing launcher log, `${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/mihao-theme-picker.log`.
+That log is replaced when the picker is next launched. CLI diagnostics and
+nonzero exit codes are unchanged; partial adapter failures still exit 3, and
+`theme status` retains the adapter results and full failure details.
+
+With the existing directory-owned app links and separate runtime bridge,
+updating the live-linked source files needs no NixOS/Home Manager rebuild or
+activation. The next picker invocation loads its updated QML; theme application
+rewrites the runtime files, requests Kitty's supported reload, and updates the
+dashboard through its existing JSON watcher. An isolated repair worktree does
+not deploy changes to the source repository targeted by those links.
+
 ## Commands
 
 These commands change desktop appearance when run in a real session. They were
@@ -196,8 +232,9 @@ The repair worktree does not change the linked live checkout. These source-only
 changes require no Home Manager rebuild or NixOS activation. Deploy the reviewed
 sources separately before running the following commands in a desktop session.
 
-Current generated wallpapers all use near-black dark backgrounds (observed
-`#0e1513` through `#1a1110`). A dark terminal/dashboard alone does not establish
+Previously generated wallpapers can retain near-black dark backgrounds
+(`#0e1513` through `#1a1110` were observed before this fix). Existing TOMLs are
+never silently regenerated. A dark terminal/dashboard alone does not establish
 a reload failure. Use visibly distinct temporary colors to check existing and
 new Kitty windows, then reset to the selected wallpaper's saved definitions:
 
