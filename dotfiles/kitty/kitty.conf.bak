@@ -20,6 +20,10 @@ map ctrl+equal change_font_size all +1.0
 map ctrl+minus change_font_size all -1.0
 
 # BEGIN_KITTY_THEME
-# Tokyo Night Storm
+# Sonokai Sushia
 include current-theme.conf
 # END_KITTY_THEME
+
+# Wallpaper colors follow the native block so kitten themes cannot replace this
+# include. Native presets remain available; theme apply restores saved colors.
+include ~/.local/share/mihao-theme/kitty.conf
