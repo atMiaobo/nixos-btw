@@ -28,6 +28,8 @@ for i = 1, 10 do
     local key = tostring(i % 10)
     hl.bind(mod .. " + " .. key, hl.dsp.focus({ workspace = i }))
 end
+hl.bind(mod .. " + TAB", hl.dsp.focus({ workspace = "e+1" }))
+hl.bind(mod .. " + SHIFT + TAB", hl.dsp.focus({ workspace = "e-1" }))
 
 --bind = $mod, -, workspace, 11
 --bind = $mod, =, workspace, 12

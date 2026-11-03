@@ -300,6 +300,7 @@
   #software
   obsidian
   firefox
+  tor-browser
   discord
   unstable.signal-desktop
   inputs.spotatui.packages.${pkgs.stdenv.hostPlatform.system}.default

@@ -1,10 +1,19 @@
 { ... }: {
-  #BASH
-  programs.bash.enable = true;
+  programs.bash = {
+    enable = true;
 
-  programs.bash.initExtra = ''
-    cl() {
-      cd "$@" && ls
-    }
-  '';
+    # ALIASES
+    shellAliases = {
+      ".." = "cd ..";
+      "..." = "cd ../..";
+      "...." = "cd ../../..";
+    };
+
+    # FUNCTIONS
+    initExtra = ''
+      cl() {
+        cd "$@" && ls
+      }
+    '';
+  };
 }
