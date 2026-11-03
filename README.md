@@ -1,15 +1,13 @@
 ### nixos is really not that hard?
 
-although Ive only been using it for like 3 months now, arguably what do I know; but even so the most painful thing so far has been fixing a bloody annoying kernel bug that was completely fucking up battery life cause it messed up
- the accessibility to the deeper cpu-package-c-states, 
-but patched it and recompiled the kernel btw so all good now and nix is actually usable and its been amazing since. lowk the reproducible nix environments have been a total game changer for me coming from windows,
-genuinely at this point its almost impossible to mess up cause versions conflict or a lost symlink or whatever. everything is declarative and the control and understanding of my own system is just on another level -
-although its perhaps I never really bothered too much with windows anyway?
+although Ive only been using it for like 3 months now, so arguably what do I know; nevertheless, I’ve **encountered** my fair share of problems with the system: the most painful thing yet has had to be fixing a bloody annoying kernel bug that was completely fucking up the battery life on my computer cause it was completely blockiing access to the deeper cpu-package-c-states.
+BUT I successfully patched it and recompiled the kernel ^^btw^^ so all good now and finally nix is actually usable as a daily system. . . and I must say its been amazing since. lowk the reproducible nix environments have been a total game changer for me, especially coming from windows,
+genuinely at this point its almost impossible to mess up cause versions conflict or a lost symlink or whatever. everything is declarative and my control over the system and understanding of it, is now just on another level -
+though perhaps its because I never really bothered too much with windows anyway...?
 
-Anyway wanna upload some videos and photos showcasing my rice, and gonna link some tools ive built for my system....
+~anyhow I wanna upload some videos and photos showcasing my rice**, and gonna link some tools ive built for my system....
 
-also this repo is mainly for me anyway in case I fuck up terribly one day, which I have been hypervigilantly warned by the very person who got me into nix lmaoo . . . .  but maybe some of the stuff
-here can help or inspire you too.
+also this repo is first and foremost meant for me in case I fuck up terribly one day, which I have been hypervigilantly warned numerous times by the very person who got me into nix wwwwwww . . . .  but maybe something amongst the chaos of config directories one canb help or inspire you too.
 
 Dynamic wallpaper and application themes are documented in [THEMING.md](THEMING.md),
 including Kitty presets, saved wallpaper palettes, temporary overrides and resets.
