@@ -2,6 +2,8 @@
     monitor = 0
     follow = mouse
 
+    enable_posix_regex = true
+
     # Top-right, compact notification card
     width = (220, 360)
     height = (0, 90)
@@ -48,8 +50,16 @@
     hide_duplicate_count = true
     show_indicators = false
 
-    # No big icons for now, just text glyphs
+
+    # Notification icon stuff
     icon_position = off
+    # Compact avatar dimensions
+    min_icon_size = 48
+    max_icon_size = 48
+    # Sharp square corners, no rounding
+    icon_corner_radius = 0
+    icon_corners = none
+
 
     # Thin horizontal bar
     progress_bar = true
@@ -69,21 +79,21 @@
     foreground = "#e4b5cb"
     frame_color = "#9cc3c0"
     highlight = "#e4b5cb, #83e6aa"
-    timeout = 1
+    timeout = 1.45
 
 [urgency_normal]
     background = "#222222"
     foreground = "#e4b5cb"
     frame_color = "#9cc3c0"
     highlight = "#e4b5cb, #83e6aa"
-    timeout = 1
+    timeout = 2.4
 
 [urgency_critical]
     background = "#52030b"
     foreground = "#ffffff"
     frame_color = "#ff0000"
     highlight = "#c72ae6, #e4b5cb"
-    timeout = 0
+    timeout = 1
 
 [volume]
     appname = volume
@@ -96,3 +106,20 @@
     set_stack_tag = brightness
     set_transient = true
     timeout = 1
+
+
+# Messaging notifications
+# Display sender/group avatars without changing ordinary notifications.
+
+[messaging-avatars]
+    appname = "^(Signal|signal-desktop|Telegram|Telegram Desktop|Discord|discord|Element|element|Slack)$"
+    icon_position = left
+    timeout = 5
+
+[messaging-category]
+    category = "im.received"
+    icon_position = left
+    timeout = 5
+
+
+

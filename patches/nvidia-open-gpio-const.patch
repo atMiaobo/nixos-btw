@@ -1,0 +1,6 @@
+--- a/kernel-open/common/inc/nv-linux.h
++++ b/kernel-open/common/inc/nv-linux.h
+@@ -1605,2 +1605,2 @@
+-static inline int __to_hwgpio(const struct gpio_device *gdev,
++static inline int __to_hwgpio(struct gpio_device *gdev,
+                               const struct of_phandle_args *gpiospec)
