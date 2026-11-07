@@ -4,7 +4,7 @@
   #Boot options
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
-  boot.loader.systemd-boot.configurationLimit = 2;
+  boot.loader.systemd-boot.configurationLimit = 6;
 
   boot.kernelParams = [
     "i915.enable_dpcd_backlight=3"

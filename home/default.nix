@@ -12,6 +12,7 @@
     ./modules/claude-local.nix
     ./modules/ollama.nix
     ./modules/zen.nix
+    ./modules/yazi.nix
   ];
 
   home.username = "mihao";

@@ -216,6 +216,17 @@
       kwallet
     ];
 
+  
+
+
+  #Defualt browser:
+  xdg.mime.enable = true;
+  xdg.mime.defaultApplications = {
+    "text/html" = "firefox.desktop";
+    "x-scheme-handler/http" = "firefox.desktop";
+    "x-scheme-handler/https" = "firefox.desktop";
+    # Add other scheme handlers as needed
+  };
 
 
   #Environment system packages
@@ -308,6 +319,10 @@
   yacreader
 
   python3
+
+
+  #games
+  osu-lazer
 
   inputs.nixpkgs-unstable.legacyPackages.${pkgs.stdenv.hostPlatform.system}.codex
   claude-code
