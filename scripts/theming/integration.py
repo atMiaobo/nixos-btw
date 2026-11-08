@@ -82,15 +82,30 @@ def _check(app: str, output: Path) -> str:
     return str(main)
 
 
-def check_dunst_processes(pids: str, main: Path):
+def check_dunst_processes(main: Path) -> bool:
     # A daemon started with -conf skips normal discovery and all drop-ins.
-    # Query only the known Dunst processes, never the session's other commands.
-    commands = run(['ps', '-p', ','.join(pids.split()), '-o', 'args='])
-    if not commands.strip():
-        raise ThemeError('Dunst process disappeared during configuration inspection; retry theme reset dunst')
+    # Inspect argv[0], rather than pgrep's comm name: Nix wrappers can change
+    # the latter to .dunst-wrapped while argv[0] still names bin/dunst.
+    commands = run(['ps', '-ww', '--user', str(os.getuid()), '-o', 'args='])
+    found = False
     for command in commands.splitlines():
         args = command.split()
+        if not args or Path(args[0]).name not in ('dunst', '.dunst-wrapped', 'dunst-wrapped'):
+            continue
+        found = True
         if any(arg in ('-conf', '-config', '--config') or arg.startswith(('-conf=', '-config=', '--config=')) for arg in args[1:]):
             raise ThemeError(f'running Dunst uses an explicit configuration ({command}); '
                              f'default drop-ins beside {main} are bypassed. '
                              'Launch Dunst without -conf, or integrate the generated appearance in its custom config list.')
+    return found
+
+
+def dunst_bus_owned() -> bool:
+    # Ask the bus itself: querying Dunst directly can auto-start it when absent.
+    reply = run(['dbus-send', '--session', '--print-reply=literal',
+                 '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus',
+                 'org.freedesktop.DBus.NameHasOwner',
+                 'string:org.freedesktop.Notifications']).strip()
+    if reply not in ('boolean true', 'boolean false'):
+        raise ThemeError(f'Dunst bus ownership query returned an invalid reply: {reply}')
+    return reply == 'boolean true'

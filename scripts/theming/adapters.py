@@ -2,7 +2,6 @@
 from __future__ import annotations
 import configparser
 import json
-import os
 from pathlib import Path
 import re
 
@@ -298,10 +297,13 @@ def live(app: str, output: Path, values: dict) -> str:
         run(['fuzzel', '--check-config', '--config', main])
         return f'{main}: include and syntax verified; staged for next launch'
     if app == 'dunst':
-        pids = run(['pgrep', '--uid', str(os.getuid()), '--exact', 'dunst'], allowed_codes=(0, 1)).strip()
-        if not pids:
-            return f'{main}: include verified; staged for next Dunst launch (no daemon visible)'
-        integration.check_dunst_processes(pids, Path(main))
+        if not integration.check_dunst_processes(Path(main)):
+            # Process discovery can miss a reachable daemon. Probe Dunst's
+            # control interface, but avoid D-Bus activating a stopped daemon.
+            if not integration.dunst_bus_owned():
+                return (f'{main}: include verified; staged for next Dunst launch '
+                        '(no daemon visible; notification service has no owner)')
+            run(['dunstctl', 'debug'])
         run(['dunstctl', 'reload'])
         return f'{main}: include verified; dunstctl reload requested'
     if app == 'hyprland':

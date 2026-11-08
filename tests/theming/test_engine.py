@@ -54,12 +54,16 @@ elif name == 'kitty':
             sys.exit(1)
         print(json.dumps({'signaled': json.loads(os.environ.get('MOCK_KITTY_PIDS', '[12345]')),
                           'skipped': [], 'vanished': []}))
-elif name == 'pgrep':
-    if os.environ.get('MOCK_NO_DUNST'):
-        sys.exit(1)
-    print('12345')
 elif name == 'ps':
-    print(os.environ.get('MOCK_DUNST_COMMAND', 'dunst'))
+    if not (os.environ.get('MOCK_NO_DUNST') or os.environ.get('MOCK_DUNST_DISCOVERY_MISS')):
+        print(os.environ.get('MOCK_DUNST_COMMAND', 'dunst'))
+elif name == 'dunstctl':
+    if os.environ.get('MOCK_NO_DUNST') or args[0] == os.environ.get('MOCK_DUNSTCTL_FAIL'):
+        print('Failed to communicate with dunst', file=sys.stderr)
+        sys.exit(1)
+elif name == 'dbus-send':
+    assert args[-2:] == ['org.freedesktop.DBus.NameHasOwner', 'string:org.freedesktop.Notifications']
+    print('boolean ' + ('false' if os.environ.get('MOCK_NO_DUNST') else 'true'))
 elif name == 'hyprctl':
     if args[0] == 'eval':
         print(os.environ.get('MOCK_HYPR_REPLY', 'ok'))
@@ -88,7 +92,7 @@ class ThemeTests(unittest.TestCase):
         self.config.mkdir(parents=True)
         self.mockbin = self.root / 'bin'
         self.mockbin.mkdir()
-        for name in ('matugen', 'kitten', 'kitty', 'awww', 'awww-daemon', 'ffmpeg', 'hyprctl', 'dunstctl', 'pgrep', 'ps', 'fuzzel'):
+        for name in ('matugen', 'kitten', 'kitty', 'awww', 'awww-daemon', 'ffmpeg', 'hyprctl', 'dunstctl', 'dbus-send', 'ps', 'fuzzel'):
             path = self.mockbin / name
             path.write_text(MOCK)
             path.chmod(0o755)
@@ -474,7 +478,48 @@ class ThemeTests(unittest.TestCase):
         self.cli('apply', 'Princess Mononoke', env=dict(self.env, MOCK_NO_DUNST='1'))
         self.assertTrue((self.cache/'generated/dunst.conf').is_file())
         self.assertFalse(self.calls('dunstctl'))
-        self.assertIn('staged', self.state()['applications']['dunst']['status'])
+        self.assertEqual(len(self.calls('dbus-send')), 1)
+        status = self.state()['applications']['dunst']['status']
+        self.assertIn('staged for next Dunst launch', status)
+        self.assertIn('notification service has no owner', status)
+
+    def test_dunst_discovery_miss_reloads_reachable_daemon_on_each_switch(self):
+        env = dict(self.env, MOCK_DUNST_DISCOVERY_MISS='1')
+        self.cli('apply', 'Princess Mononoke', env=env)
+        self.cli('apply', 'Rain live', env=env)
+        self.assertEqual(self.calls('dunstctl'), [
+            ['dunstctl', 'debug'], ['dunstctl', 'reload'],
+            ['dunstctl', 'debug'], ['dunstctl', 'reload']])
+        status = self.state()['applications']['dunst']['status']
+        self.assertIn('dunstctl reload requested', status)
+        self.assertNotIn('staged', status)
+
+    def test_dunst_discovery_miss_does_not_hide_reload_failure(self):
+        self.apply()
+        output = self.cache/'generated/dunst.conf'
+        before = output.read_bytes()
+        custom = self.home/'custom dunst colors'
+        custom.write_text('[global]\nbackground="#123456"\n')
+        result = self.cli('dunst', '--file', custom, code=3,
+                          env=dict(self.env, MOCK_DUNST_DISCOVERY_MISS='1',
+                                   MOCK_DUNSTCTL_FAIL='reload'))
+        self.assertEqual(self.calls('dunstctl')[-2:], [
+            ['dunstctl', 'debug'], ['dunstctl', 'reload']])
+        self.assertIn('Failed to communicate with dunst', result.stderr)
+        self.assertEqual(self.state()['applications']['dunst']['status'], 'failed')
+        self.assertEqual(output.read_bytes(), before)
+
+    def test_dunst_detected_daemon_control_failure_is_not_staged(self):
+        self.cli('apply', 'Princess Mononoke', code=3,
+                 env=dict(self.env, MOCK_DUNSTCTL_FAIL='reload'))
+        self.assertEqual(self.calls('dunstctl'), [['dunstctl', 'reload']])
+        self.assertEqual(self.state()['applications']['dunst']['status'], 'failed')
+
+    def test_dunst_discovery_miss_control_failure_is_not_staged(self):
+        self.cli('apply', 'Princess Mononoke', code=3,
+                 env=dict(self.env, MOCK_DUNST_DISCOVERY_MISS='1', MOCK_DUNSTCTL_FAIL='debug'))
+        self.assertEqual(self.calls('dunstctl'), [['dunstctl', 'debug']])
+        self.assertEqual(self.state()['applications']['dunst']['status'], 'failed')
 
     def test_regenerate_named_wallpaper_before_first_selection(self):
         self.cli('regenerate', 'Princess Mononoke')
@@ -667,6 +712,36 @@ class ThemeTests(unittest.TestCase):
         self.assertIn('explicit configuration', result.stderr)
         self.assertIn('drop-ins', result.stderr)
         self.assertEqual(len(self.calls('dunstctl')), 1)
+
+    def test_dunst_absolute_and_wrapped_executables_reload(self):
+        for executable in ('/run/current-system/sw/bin/dunst',
+                           '/nix/store/example-dunst/bin/.dunst-wrapped',
+                           '/nix/store/example-dunst/bin/dunst-wrapped'):
+            with self.subTest(executable=executable):
+                self.cli('apply', 'Princess Mononoke',
+                         env=dict(self.env, MOCK_DUNST_COMMAND=executable))
+                self.assertIn('dunstctl reload requested',
+                              self.state()['applications']['dunst']['status'])
+        self.assertEqual(self.calls('dunstctl'), [['dunstctl', 'reload']] * 3)
+
+    def test_dunst_wrapped_explicit_config_forms_block_reload(self):
+        for option in ('-conf "/some custom path/dunstrc"', '-config /custom',
+                       '--config /custom', '-conf=/custom', '-config=/custom',
+                       '--config=/custom'):
+            with self.subTest(option=option):
+                result = self.cli('apply', 'Princess Mononoke', code=3,
+                                  env=dict(self.env, MOCK_DUNST_COMMAND=
+                                           '/nix/store/example/bin/.dunst-wrapped ' + option))
+                self.assertIn('explicit configuration', result.stderr)
+                self.assertEqual(self.state()['applications']['dunst']['status'], 'failed')
+        self.assertFalse(self.calls('dunstctl'))
+
+    def test_dunst_process_inspection_ignores_unrelated_command_arguments(self):
+        self.cli('apply', 'Princess Mononoke',
+                 env=dict(self.env, MOCK_DUNST_COMMAND=
+                          '/bin/editor /tmp/dunst --config /custom\n'
+                          '/run/current-system/sw/bin/dunst'))
+        self.assertEqual(self.calls('dunstctl'), [['dunstctl', 'reload']])
 
     def test_fuzzel_native_validation_failure_restores_output(self):
         self.apply()
