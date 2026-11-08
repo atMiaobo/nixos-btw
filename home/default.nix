@@ -5,6 +5,7 @@
     ./modules/shell.nix
     ./modules/spicetify.nix
     ./modules/media.nix
+    ./modules/prodayer.nix
     ./modules/packages.nix
     ./modules/scripts.nix
     ./modules/desktop.nix

@@ -276,3 +276,12 @@ hl.layer_rule({
     blur = true,
     ignore_alpha = 0.4,
 })
+
+
+
+-- CUSTOM APPS
+-- Prodayer: global media controls
+dofile("/home/mihao/Projects/prodayer/result/share/prodayer/prodayer.lua")({
+    executable = "/home/mihao/Projects/prodayer/result/bin/prodayer",
+    modifiers = "SUPER + ALT",
+})

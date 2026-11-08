@@ -15,6 +15,9 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
+    # Local source is snapshotted/locked at update time; no runtime checkout dependency.
+    prodayer.url = "path:/home/mihao/Projects/prodayer";
+
     spicetify-nix.url = "github:Gerg-L/spicetify-nix";
 
 
