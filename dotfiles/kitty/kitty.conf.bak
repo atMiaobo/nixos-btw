@@ -13,6 +13,10 @@ cursor_trail 3
 cursor_trail_decay 0.1 0.4
 cursor_trail_start_threshold 2
 
+
+#weird new kernel bug fix?
+remember_window_size no
+
 #maybe move to Home Manager later...
 confirm_os_window_close 0
 
@@ -20,10 +24,32 @@ map ctrl+equal change_font_size all +1.0
 map ctrl+minus change_font_size all -1.0
 
 # BEGIN_KITTY_THEME
-# Sonokai Sushia
+# Kanagawa_dragon
 include current-theme.conf
 # END_KITTY_THEME
 
 # Wallpaper colors follow the native block so kitten themes cannot replace this
 # include. Native presets remain available; theme apply restores saved colors.
 include ~/.local/share/mihao-theme/kitty.conf
+
+# Automatically copy selected text
+copy_on_select clipboard
+
+# Word deletion shortcuts
+map ctrl+delete send_text all \ed
+map ctrl+backspace send_text all \e\x7f
+
+# Click anywhere in the current command to move the cursor
+mouse_map left click ungrabbed mouse_handle_click link prompt
+
+# Enable command-line mouse cursor positioning
+shell_integration no-rc
+
+# Reduce mouse click latency from ~500ms to 120ms
+click_interval 0.12
+
+# Instant cursor positioning without click detection delay
+mouse_map ctrl+left press ungrabbed mouse_handle_click prompt
+
+# Instantly position cursor with Ctrl+Click
+mouse_map ctrl+left press ungrabbed mouse_handle_click prompt

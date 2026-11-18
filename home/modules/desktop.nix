@@ -29,4 +29,12 @@ in
 
   # First deployment: initialize explicitly from the reviewed checkout.
   # Do not run theme scripts or write runtime state during HM activation.
+
+
+  fonts.fontconfig = {
+    enable = true;
+    defaultFonts = {
+      monospace = [ "JetBrainsMono Nerd Font Mono" ];
+    };
+  };
 }

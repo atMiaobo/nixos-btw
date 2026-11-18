@@ -281,7 +281,5 @@ hl.layer_rule({
 
 -- CUSTOM APPS
 -- Prodayer: global media controls
-dofile("/home/mihao/Projects/prodayer/result/share/prodayer/prodayer.lua")({
-    executable = "/home/mihao/Projects/prodayer/result/bin/prodayer",
-    modifiers = "SUPER + ALT",
-})
+dofile((os.getenv("XDG_CONFIG_HOME") or (os.getenv("HOME") .. "/.config"))
+    .. "/prodayer/hyprland.lua")
